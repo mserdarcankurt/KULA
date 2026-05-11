@@ -1,0 +1,903 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, doc, updateDoc, getDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { useAuth } from '../hooks/useAuth';
+import { Message, Item, Chat, UserProfile, Circle } from '../types';
+import { Send, Smile, Languages, Loader2, MessageSquare, CheckCircle2, Package, Clock, BarChart2, Plus, Info, X, Users } from 'lucide-react';
+import { translateText } from '../services/geminiService';
+import { motion, AnimatePresence } from 'motion/react';
+
+interface ChatRoomProps {
+  chatId: string;
+}
+
+interface ChatMessageProps {
+  msg: Message;
+  isOwn: boolean;
+  targetLanguage: string;
+  onVote: (pollId: string, optionKey: string) => void;
+  onClaim: (msgId: string) => void;
+  onReply: (msg: Message) => void;
+  onOpenThread?: (msg: Message) => void;
+}
+
+const ChatMessage: React.FC<ChatMessageProps> = ({ msg, isOwn, targetLanguage, onVote, onClaim, onReply, onOpenThread }) => {
+  const { user } = useAuth();
+  const [translatedText, setTranslatedText] = useState<string | null>(null);
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [showOriginal, setShowOriginal] = useState(true);
+
+  const handleTranslate = async () => {
+    if (translatedText) {
+      setShowOriginal(!showOriginal);
+      return;
+    }
+
+    setIsTranslating(true);
+    try {
+      const result = await translateText(msg.text, targetLanguage);
+      setTranslatedText(result);
+      setShowOriginal(false);
+    } catch (err) {
+      console.error('Translation failed', err);
+    } finally {
+      setIsTranslating(false);
+    }
+  };
+
+  if (msg.type === 'POLL' && msg.poll) {
+    const options = msg.poll.options;
+    const totalVotes = Object.values(options).reduce((acc: number, opt: any) => acc + (opt.votes?.length || 0), 0);
+    
+    return (
+      <div className="flex justify-start w-full">
+        <div className="bg-stone-900 text-white p-6 rounded-[2rem] w-full max-w-[90%] shadow-xl border border-stone-800">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 bg-stone-800 rounded-2xl flex items-center justify-center text-amber-400">
+              <BarChart2 size={20} />
+            </div>
+            <div>
+              <h4 className="text-xs font-black uppercase tracking-[0.2em] text-stone-500">Community Poll</h4>
+              <p className="serif text-lg font-bold">{msg.poll.question}</p>
+            </div>
+          </div>
+          
+          <div className="space-y-3">
+            {Object.entries(options).map(([key, option]: [string, any]) => {
+              const hasVoted = option.votes?.includes(user?.uid || '');
+              const count = option.votes?.length || 0;
+              const tv = totalVotes as number;
+              const percentage = tv > 0 ? (count / tv) * 100 : 0;
+              
+              return (
+                <button 
+                  key={key}
+                  onClick={() => onVote(msg.id, key)}
+                  className={`relative w-full p-4 rounded-2xl border-2 transition-all flex items-center justify-between overflow-hidden group ${
+                    hasVoted 
+                      ? 'border-amber-400 bg-stone-800' 
+                      : 'border-stone-800 bg-stone-900 hover:border-stone-700'
+                  }`}
+                >
+                  <div 
+                    className="absolute inset-y-0 left-0 bg-amber-400/10 transition-all duration-1000" 
+                    style={{ width: `${percentage}%` }}
+                  />
+                  <span className="relative z-10 text-sm font-bold">{option.text}</span>
+                  <div className="relative z-10 flex items-center gap-2">
+                    {hasVoted && <CheckCircle2 size={14} className="text-amber-400" />}
+                    <span className="text-[10px] font-black">{option.votes?.length || 0}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          
+          <div className="mt-4 pt-4 border-t border-stone-800 flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-stone-500">
+            <span>{totalVotes} total votes</span>
+            <span>İmece Decision</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (msg.type === 'URGENT') {
+    const isClaimed = msg.metadata?.status === 'CLAIMED' || msg.metadata?.status === 'RESOLVED';
+    const isClaimedByMe = msg.metadata?.claimedBy === user?.uid;
+
+    return (
+      <div className="flex justify-center w-full my-6 px-4">
+        <motion.div 
+          initial={{ scale: 0.95, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          className={`w-full max-w-md bg-stone-900 text-white rounded-[2.5rem] overflow-hidden shadow-2xl border-4 ${isClaimed ? 'border-stone-800 grayscale' : 'border-red-500/20'}`}
+        >
+          <div className={`px-6 py-4 flex items-center justify-between ${isClaimed ? 'bg-stone-800' : 'bg-red-500'}`}>
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 bg-white/20 rounded-full flex items-center justify-center animate-pulse">
+                <Clock size={16} />
+              </div>
+              <span className="text-[10px] font-black uppercase tracking-[0.2em]">Urgent Need</span>
+            </div>
+            {isClaimed && (
+              <span className="text-[10px] font-black uppercase tracking-widest bg-white/20 px-3 py-1 rounded-full">
+                {msg.metadata?.status}
+              </span>
+            )}
+          </div>
+          
+          <div className="p-8 space-y-6">
+            <p className="serif text-2xl font-bold leading-tight">{msg.text}</p>
+            
+            {!isClaimed ? (
+              <button 
+                onClick={() => onClaim(msg.id)}
+                className="w-full py-4 bg-white text-stone-900 rounded-2xl font-black text-xs uppercase tracking-widest shadow-[0_8px_24px_rgba(255,255,255,0.2)] hover:scale-105 transition-all active:scale-95 flex items-center justify-center gap-2"
+              >
+                <Plus size={18} />
+                I can help with this
+              </button>
+            ) : (
+              <div className="flex items-center gap-3 p-4 bg-stone-800 rounded-2xl border border-stone-700">
+                <div className="w-10 h-10 bg-stone-700 rounded-xl flex items-center justify-center text-green-400">
+                  <CheckCircle2 size={20} />
+                </div>
+                <div>
+                  <span className="text-[8px] font-black uppercase tracking-widest text-stone-500 block">Claimed By</span>
+                  <span className="text-sm font-bold text-white">{isClaimedByMe ? 'You' : msg.metadata?.claimedByName}</span>
+                </div>
+              </div>
+            )}
+          </div>
+          
+          {!isClaimed && (
+            <div className="bg-red-500/5 px-8 py-3 text-[9px] font-bold text-red-500/50 uppercase tracking-[0.2em] text-center">
+              Broadcasting to all Circle members
+            </div>
+          )}
+        </motion.div>
+      </div>
+    );
+  }
+
+  if (msg.type === 'SYSTEM') {
+    return (
+      <div className="flex justify-center w-full my-4 px-8">
+        <div className="bg-stone-100/80 backdrop-blur-sm px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-[0.2em] text-stone-400 border border-stone-200/50 flex items-center gap-2">
+          <Info size={12} />
+          {msg.text}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}>
+      <div className="flex flex-col max-w-[80%] gap-1">
+        {!isOwn && msg.senderName && (
+          <span className="text-[10px] font-black uppercase tracking-widest text-stone-400 ml-1 mb-1">
+            {msg.senderName}
+          </span>
+        )}
+        {msg.replyToText && (
+          <div className={`flex items-center gap-2 px-3 py-1 text-[10px] text-stone-400 bg-stone-100 rounded-lg border border-stone-200 mb-1 ${isOwn ? 'mr-4 self-end' : 'ml-4 self-start'}`}>
+            <MessageSquare size={10} />
+            <span className="line-clamp-1">
+              <span className="font-bold">{msg.replyToName || 'Neighbor'}:</span> {msg.replyToText}
+            </span>
+          </div>
+        )}
+        <div 
+          className={`px-4 py-3 rounded-2xl text-sm shadow-sm relative group ${
+            isOwn 
+              ? 'bg-stone-900 text-white rounded-tr-none' 
+              : 'bg-white text-stone-800 rounded-tl-none border border-stone-100'
+          }`}
+        >
+          {showOriginal ? msg.text : translatedText}
+          
+          <div className={`absolute top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 ${isOwn ? '-left-28' : '-right-28'}`}>
+            <button 
+              onClick={() => onReply(msg)}
+              className="p-1.5 rounded-full bg-stone-100 hover:bg-stone-200 text-stone-600"
+              title="Reply"
+            >
+              <Plus size={14} />
+            </button>
+            {onOpenThread ? (
+              <button 
+                onClick={() => onOpenThread(msg)}
+                className="p-1.5 rounded-full bg-stone-100 hover:bg-stone-200 text-stone-600"
+                title="Open Thread"
+              >
+                <MessageSquare size={14} />
+              </button>
+            ) : null}
+            <button 
+              onClick={handleTranslate}
+              className="p-1.5 rounded-full bg-stone-100 hover:bg-stone-200 text-stone-600"
+              title={`Translate to ${targetLanguage}`}
+            >
+              {isTranslating ? <Loader2 size={14} className="animate-spin" /> : <Languages size={14} />}
+            </button>
+          </div>
+        </div>
+        {msg.replyCount && msg.replyCount > 0 && (
+          <button 
+            onClick={() => onOpenThread(msg)}
+            className={`text-[10px] font-black text-[--color-brand] uppercase tracking-widest mt-1 flex items-center gap-1 hover:underline ${isOwn ? 'self-end' : 'self-start'}`}
+          >
+            <MessageSquare size={10} />
+            {msg.replyCount} {msg.replyCount === 1 ? 'reply' : 'replies'}
+          </button>
+        )}
+        {!showOriginal && translatedText && (
+          <span className="text-[10px] text-stone-400 px-1 flex items-center gap-1">
+            <Languages size={10} /> Translated to {targetLanguage}
+            <button onClick={() => setShowOriginal(true)} className="underline ml-1">See original</button>
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function ChatRoom({ chatId, onAction }: { chatId: string, onAction?: (type: 'ASK' | 'SHARE') => void }) {
+  const { user, profile } = useAuth();
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [chat, setChat] = useState<Chat | null>(null);
+  const [item, setItem] = useState<Item | null>(null);
+  const [otherUser, setOtherUser] = useState<UserProfile | null>(null);
+  const [commonCircles, setCommonCircles] = useState<Circle[]>([]);
+  const [text, setText] = useState('');
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  const [activeThread, setActiveThread] = useState<Message | null>(null);
+  const [threadMessages, setThreadMessages] = useState<Message[]>([]);
+  const [showPollCreator, setShowPollCreator] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState('');
+  const [pollOptions, setPollOptions] = useState(['', '']);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const targetLanguage = profile?.preferredLanguage || 'English';
+
+  useEffect(() => {
+    const unsubscribeChat = onSnapshot(doc(db, 'chats', chatId), (snapshot) => {
+      if (snapshot.exists()) {
+        const chatData = { id: snapshot.id, ...snapshot.data() } as Chat;
+        setChat(chatData);
+
+        // Mark as read
+        if (user && chatData.unreadBy?.includes(user.uid)) {
+          updateDoc(doc(db, 'chats', chatId), {
+            unreadBy: arrayRemove(user.uid)
+          }).catch(err => console.error("Could not clear unread count:", err));
+        }
+        
+        if (chatData.type === 'DIRECT' && user) {
+          const otherId = chatData.participants.find(p => p !== user.uid);
+          if (otherId) {
+            getDoc(doc(db, 'users', otherId)).then(async (userSnap) => {
+              if (userSnap.exists()) {
+                const otherProfile = { uid: userSnap.id, ...userSnap.data() } as UserProfile;
+                setOtherUser(otherProfile);
+
+                if (profile?.joinedCircles && otherProfile.joinedCircles) {
+                  const commonIds = profile.joinedCircles.filter(id => 
+                    otherProfile.joinedCircles?.includes(id)
+                  );
+                  
+                  if (commonIds.length > 0) {
+                    const fetchedCircles: Circle[] = [];
+                    for (const id of commonIds) {
+                      const circleSnap = await getDoc(doc(db, 'circles', id));
+                      if (circleSnap.exists()) {
+                        fetchedCircles.push({ id: circleSnap.id, ...circleSnap.data() } as Circle);
+                      }
+                    }
+                    setCommonCircles(fetchedCircles);
+                  }
+                }
+              }
+            });
+          }
+        }
+        
+        if (chatData.itemId) {
+          getDoc(doc(db, 'items', chatData.itemId)).then(itemSnap => {
+            if (itemSnap.exists()) {
+              setItem({ id: itemSnap.id, ...itemSnap.data() } as Item);
+            }
+          });
+        }
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, `chats/${chatId}`);
+    });
+
+    const baseQueryConstraints: any[] = [];
+    if (chat) {
+      if (chat.type === 'CHANNEL' && chat.circleId) {
+        baseQueryConstraints.push(where('circleId', '==', chat.circleId));
+      } else {
+        baseQueryConstraints.push(where('participants', 'array-contains', user.uid));
+      }
+    }
+
+    const q = query(
+      collection(db, 'chats', chatId, 'messages'),
+      ...baseQueryConstraints,
+      orderBy('createdAt', 'asc')
+    );
+
+    const unsubscribeMessages = onSnapshot(q, (snapshot) => {
+      const fetchedMessages = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Message[];
+      setMessages(fetchedMessages);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages`);
+    });
+
+    return () => {
+      unsubscribeChat();
+      unsubscribeMessages();
+    };
+  }, [chatId]);
+
+  useEffect(() => {
+    if (!activeThread) {
+      setThreadMessages([]);
+      return;
+    }
+
+    const baseQueryConstraints: any[] = [];
+    if (chat) {
+      if (chat.type === 'CHANNEL' && chat.circleId) {
+        baseQueryConstraints.push(where('circleId', '==', chat.circleId));
+      } else {
+        baseQueryConstraints.push(where('participants', 'array-contains', user.uid));
+      }
+    }
+
+    const q = query(
+      collection(db, 'chats', chatId, 'messages', activeThread.id, 'replies'),
+      ...baseQueryConstraints,
+      orderBy('createdAt', 'asc')
+    );
+
+    const unsubscribeThread = onSnapshot(q, (snapshot) => {
+      const fetched = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Message[];
+      setThreadMessages(fetched);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages/${activeThread.id}/replies`);
+    });
+
+    return () => unsubscribeThread();
+  }, [chatId, activeThread]);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  const sendMessage = async (messageText: string, type: 'TEXT' | 'POLL' | 'SYSTEM' | 'URGENT' = 'TEXT', pollOrMetadata?: any) => {
+    if (!user) return;
+    if (type === 'TEXT' && !messageText.trim()) return;
+
+    try {
+      const msgData: any = {
+        chatId,
+        senderId: user.uid,
+        text: messageText,
+        type,
+        createdAt: serverTimestamp(),
+        chatType: chat?.type || 'DIRECT',
+        participants: chat?.participants || [],
+        circleId: chat?.circleId || null
+      };
+
+      if (type === 'POLL') msgData.poll = pollOrMetadata;
+      if (type === 'URGENT') msgData.metadata = pollOrMetadata?.metadata || { status: 'PENDING' };
+
+      await addDoc(collection(db, 'chats', chatId, 'messages'), msgData);
+
+      await updateDoc(doc(db, 'chats', chatId), {
+        lastMessage: type === 'POLL' ? `Poll: ${pollOrMetadata.question}` : 
+                     type === 'URGENT' ? `🚨 SOS: ${messageText}` : messageText,
+        updatedAt: serverTimestamp(),
+        unreadBy: chat?.participants.filter(p => p !== user?.uid) || []
+      });
+    } catch (err) {
+      console.error('Error sending message:', err);
+    }
+  };
+
+  const handleSend = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!text.trim()) return;
+    
+    const messageText = text;
+    setText('');
+    
+    const isUrgentThread = chat?.channelName === '#UrgentNeeds';
+    const msgType = (isUrgentThread && messageText.length < 100) ? 'URGENT' : 'TEXT';
+    
+    const metadata = msgType === 'URGENT' ? { status: 'PENDING' } : undefined;
+    
+    const msgData: any = {
+      chatId,
+      senderId: user?.uid,
+      senderName: profile?.displayName || 'Neighbor',
+      text: messageText,
+      type: msgType,
+      createdAt: serverTimestamp(),
+      chatType: chat?.type || 'DIRECT',
+      participants: chat?.participants || [],
+      circleId: chat?.circleId || null
+    };
+
+    if (activeThread) {
+      // Sending to thread
+      try {
+        await addDoc(collection(db, 'chats', chatId, 'messages', activeThread.id, 'replies'), msgData);
+        
+        // Update parent message replyCount
+        await updateDoc(doc(db, 'chats', chatId, 'messages', activeThread.id), {
+          replyCount: (activeThread.replyCount || 0) + 1
+        });
+        
+        // No need to update lastMessage of chat for thread replies? 
+        // Slack usually does but let's keep it clean
+      } catch (err) {
+        console.error('Error sending reply:', err);
+      }
+    } else {
+      // Normal message
+      msgData.replyToId = replyingTo?.id || null;
+      msgData.replyToText = replyingTo?.text || null;
+      msgData.replyToName = replyingTo?.senderName || 'Neighbor';
+
+      if (msgType === 'URGENT') msgData.metadata = metadata;
+      
+      try {
+        await addDoc(collection(db, 'chats', chatId, 'messages'), msgData);
+        setReplyingTo(null);
+
+        await updateDoc(doc(db, 'chats', chatId), {
+          lastMessage: msgType === 'URGENT' ? `🚨 SOS: ${messageText}` : messageText,
+          updatedAt: serverTimestamp(),
+          unreadBy: chat?.participants.filter(p => p !== user?.uid) || []
+        });
+      } catch (err) {
+        console.error('Error sending message:', err);
+      }
+    }
+  };
+
+  const createPoll = async () => {
+    if (!pollQuestion.trim() || pollOptions.filter(o => o.trim()).length < 2) return;
+    
+    const pollData = {
+      question: pollQuestion,
+      options: pollOptions.reduce((acc, opt, i) => {
+        if (opt.trim()) {
+          acc[`option_${i}`] = { text: opt, votes: [] };
+        }
+        return acc;
+      }, {} as any)
+    };
+
+    await sendMessage('', 'POLL', pollData);
+    setShowPollCreator(false);
+    setPollQuestion('');
+    setPollOptions(['', '']);
+  };
+
+  const handleVote = async (messageId: string, optionKey: string) => {
+    if (!user) return;
+    
+    const msgRef = doc(db, 'chats', chatId, 'messages', messageId);
+    const msgSnap = await getDoc(msgRef);
+    if (!msgSnap.exists()) return;
+    
+    const msgData = msgSnap.data() as Message;
+    if (!msgData.poll) return;
+
+    // Remove user votes from all options first to allow re-voting (or just use one vote)
+    const newOptions = { ...msgData.poll.options };
+    Object.keys(newOptions).forEach(key => {
+      newOptions[key].votes = newOptions[key].votes.filter(v => v !== user.uid);
+    });
+    
+    // Add new vote
+    newOptions[optionKey].votes.push(user.uid);
+
+    await updateDoc(msgRef, {
+      'poll.options': newOptions
+    });
+  };
+
+  const confirmHandover = async () => {
+    if (!item || item.ownerId !== user?.uid) return;
+    
+    try {
+      await updateDoc(doc(db, 'items', item.id), {
+        status: 'COMPLETED'
+      });
+      
+      await sendMessage(`${profile?.displayName || 'Owner'} marked this as completed. Handover confirmed!`, 'SYSTEM');
+      
+      setItem(prev => prev ? { ...prev, status: 'COMPLETED' } : null);
+    } catch (err) {
+      console.error('Error confirming handover:', err);
+    }
+  };
+
+  const handleClaim = async (messageId: string) => {
+    if (!user || !profile) return;
+    
+    const msgRef = doc(db, 'chats', chatId, 'messages', messageId);
+    await updateDoc(msgRef, {
+      'metadata.status': 'CLAIMED',
+      'metadata.claimedBy': user.uid,
+      'metadata.claimedByName': profile.displayName || 'Neighbor'
+    });
+    
+    await sendMessage(`${profile.displayName || 'Neighbor'} is on it! Claimed this urgent need.`, 'SYSTEM');
+  };
+
+  const quickMessages = [
+    "Is this still available?",
+    "How can I help with this?",
+    "I'd love to learn more!",
+    "Thank you for sharing!"
+  ];
+
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden bg-stone-50/50">
+      {/* Context Header */}
+      {item && (
+        <div className="bg-white border-b border-stone-100 p-4 shadow-sm z-10">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 bg-stone-100 rounded-2xl overflow-hidden shadow-inner border border-stone-50">
+                {item.images?.[0] ? (
+                  <img referrerPolicy="no-referrer" src={item.images[0]} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-stone-300">
+                    <Package size={20} />
+                  </div>
+                )}
+              </div>
+              <div>
+                <h3 className="serif text-sm font-bold text-stone-900 leading-tight line-clamp-1">{item.title}</h3>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${
+                    item.status === 'ACTIVE' ? 'bg-green-100 text-green-700' :
+                    item.status === 'MATCHED' ? 'bg-amber-100 text-amber-700' :
+                    'bg-stone-100 text-stone-500'
+                  }`}>
+                    {item.status}
+                  </span>
+                  <span className="text-[8px] text-stone-400 font-bold uppercase tracking-widest flex items-center gap-1">
+                    <Clock size={10} />
+                    Coordination
+                  </span>
+                </div>
+              </div>
+            </div>
+            
+            {item.ownerId === user?.uid && (item.status === 'ACTIVE' || item.status === 'MATCHED') && (
+              <button 
+                onClick={confirmHandover}
+                className="flex items-center gap-2 px-4 py-2.5 bg-stone-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-md hover:bg-black transition-all active:scale-95"
+              >
+                <CheckCircle2 size={14} className="text-amber-400" />
+                <span>Confirm Handover</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {chat?.type === 'DIRECT' && otherUser && (
+        <div className="bg-white border-b border-stone-100 px-6 py-4 flex items-center justify-between shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-stone-100 rounded-2xl overflow-hidden border border-stone-50">
+              {otherUser.photoURL ? (
+                <img src={otherUser.photoURL} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-stone-300 font-bold">
+                  {otherUser.displayName?.charAt(0)}
+                </div>
+              )}
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-stone-900 leading-tight">{otherUser.displayName}</h2>
+              {commonCircles.length > 0 ? (
+                <div className="flex items-center gap-1.5 mt-0.5 animate-in fade-in slide-in-from-left-2 duration-1000">
+                  <div className="flex -space-x-1">
+                    {commonCircles.slice(0, 3).map((c, i) => (
+                      <div key={c.id} className="w-3.5 h-3.5 rounded-full bg-amber-400 border border-white flex items-center justify-center" style={{ zIndex: 10 - i }}>
+                        <Users size={8} className="text-stone-900" />
+                      </div>
+                    ))}
+                  </div>
+                  <span className="text-[9px] font-black uppercase tracking-widest text-[--color-brand]">
+                    In Common: {commonCircles.map(c => c.name).join(', ')}
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1 mt-0.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-stone-200" />
+                  <span className="text-[9px] font-black uppercase tracking-widest text-stone-400 italic">
+                    Neighbor Discovery
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {chat?.type === 'CHANNEL' && (
+        <div className="bg-stone-900 text-white px-6 py-4 flex items-center justify-between shadow-md">
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={() => activeThread ? setActiveThread(null) : null}
+              className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${
+                activeThread ? 'bg-amber-400 text-stone-900' : 'bg-stone-800 text-stone-400'
+              }`}
+            >
+              {activeThread ? <X size={16} /> : <span className="font-black text-sm">#</span>}
+            </button>
+            <div>
+              <h2 className="text-xs font-black uppercase tracking-widest leading-none">
+                {activeThread ? 'Thread in ' : ''}{chat.channelName}
+              </h2>
+              {activeThread && (
+                <span className="text-[8px] font-bold text-stone-500 uppercase tracking-widest mt-1 block">
+                  Focused Conversation
+                </span>
+              )}
+            </div>
+          </div>
+          {onAction && !activeThread && (
+            <button 
+              onClick={() => {}}
+              className="text-[9px] font-black uppercase tracking-widest text-stone-500"
+            >
+              Channel
+            </button>
+          )}
+        </div>
+      )}
+
+      {chat?.channelName === '#UrgentNeeds' && messages.filter(m => m.type === 'URGENT' && m.metadata?.status === 'PENDING').length > 0 && (
+        <div className="bg-amber-50 border-b border-amber-100 px-6 py-2 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+            <span className="text-[10px] font-black uppercase tracking-widest text-amber-900">
+              {messages.filter(m => m.type === 'URGENT' && m.metadata?.status === 'PENDING').length} Active Needs
+            </span>
+          </div>
+          <span className="text-[9px] font-bold text-amber-700 italic">Neighbors are coordinating...</span>
+        </div>
+      )}
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={scrollRef}>
+        {activeThread && (
+          <div className="mb-8 p-4 bg-white rounded-[2rem] border-2 border-stone-100 shadow-sm">
+            <div className="flex justify-between items-center mb-3">
+              <span className="text-[10px] font-black uppercase tracking-widest text-stone-400 flex items-center gap-2">
+                <Smile size={12} /> Root Message
+              </span>
+              <button 
+                onClick={() => setActiveThread(null)}
+                className="text-[8px] font-black uppercase tracking-widest text-stone-400 hover:text-stone-900"
+              >
+                Close
+              </button>
+            </div>
+            <ChatMessage 
+              msg={activeThread} 
+              isOwn={activeThread.senderId === user?.uid} 
+              targetLanguage={targetLanguage}
+              onVote={handleVote}
+              onClaim={handleClaim}
+              onReply={setReplyingTo}
+            />
+            <div className="mt-8 mb-4 flex items-center gap-4">
+              <div className="h-[1px] flex-1 bg-stone-100" />
+              <span className="text-[10px] font-black uppercase tracking-widest text-stone-300">
+                {threadMessages.length} {threadMessages.length === 1 ? 'Response' : 'Responses'}
+              </span>
+              <div className="h-[1px] flex-1 bg-stone-100" />
+            </div>
+          </div>
+        )}
+
+        {(activeThread ? threadMessages : messages).map((msg) => (
+          <ChatMessage 
+            key={msg.id} 
+            msg={msg} 
+            isOwn={msg.senderId === user?.uid} 
+            targetLanguage={targetLanguage}
+            onVote={handleVote}
+            onClaim={handleClaim}
+            onReply={setReplyingTo}
+            onOpenThread={activeThread ? undefined : setActiveThread}
+          />
+        ))}
+        {(activeThread ? threadMessages : messages).length === 0 && (
+          <div className="h-full flex flex-col items-center justify-center text-center p-8 space-y-4">
+            <div className="w-16 h-16 bg-stone-100 rounded-full flex items-center justify-center text-stone-300">
+              <MessageSquare size={32} />
+            </div>
+            <div>
+              <h4 className="serif text-xl font-bold text-stone-400">Start the conversation</h4>
+              <p className="text-stone-300 text-sm italic">Neighbors are waiting to connect!</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <AnimatePresence>
+        {replyingTo && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="bg-stone-100 border-t border-stone-200 px-6 py-2 flex items-center justify-between"
+          >
+            <div className="flex items-center gap-2 overflow-hidden">
+              <MessageSquare size={12} className="text-stone-400 shrink-0" />
+              <div className="text-[10px] text-stone-500 font-medium truncate">
+                Replying to <span className="font-bold">{replyingTo.senderName || 'Neighbor'}</span>: <span className="italic">"{replyingTo.text}"</span>
+              </div>
+            </div>
+            <button onClick={() => setReplyingTo(null)} className="text-stone-400 hover:text-stone-900 p-1">
+              <X size={14} />
+            </button>
+          </motion.div>
+        )}
+        {showPollCreator && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="bg-white border-t border-stone-100 p-6 space-y-4 overflow-hidden"
+          >
+            <div className="flex justify-between items-center mb-2">
+              <h4 className="text-[10px] font-black uppercase tracking-widest text-stone-400">Create Circle Poll</h4>
+              <button onClick={() => setShowPollCreator(false)} className="text-stone-400 hover:text-stone-900">
+                <X size={16} />
+              </button>
+            </div>
+            <input 
+              type="text" 
+              placeholder="The Question..."
+              value={pollQuestion}
+              onChange={(e) => setPollQuestion(e.target.value)}
+              className="w-full bg-stone-50 border border-stone-100 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-1 focus:ring-stone-900 shadow-inner"
+            />
+            <div className="space-y-2">
+              {pollOptions.map((opt, i) => (
+                <div key={i} className="flex gap-2">
+                  <input 
+                    type="text" 
+                    placeholder={`Option ${i+1}`}
+                    value={opt}
+                    onChange={(e) => {
+                      const newOpts = [...pollOptions];
+                      newOpts[i] = e.target.value;
+                      setPollOptions(newOpts);
+                    }}
+                    className="flex-1 bg-white border border-stone-100 rounded-xl px-4 py-2 text-xs font-medium outline-none focus:ring-1 focus:ring-stone-900"
+                  />
+                  {pollOptions.length > 2 && (
+                    <button 
+                      onClick={() => setPollOptions(prev => prev.filter((_, idx) => idx !== i))}
+                      className="p-2 text-stone-300 hover:text-red-500"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+              ))}
+              <button 
+                onClick={() => setPollOptions(prev => [...prev, ''])}
+                className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-[--color-brand] px-2 py-1"
+              >
+                <Plus size={12} />
+                Add Option
+              </button>
+            </div>
+            <button 
+              onClick={createPoll}
+              disabled={!pollQuestion.trim() || pollOptions.filter(o => o.trim()).length < 2}
+              className="w-full py-3 bg-stone-900 text-white rounded-xl font-bold text-xs uppercase tracking-widest shadow-md hover:bg-black transition-all disabled:opacity-50"
+            >
+              Post Poll to Circle
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {!showPollCreator && (
+        <div className="px-4 pb-4 pt-3 flex gap-2 overflow-x-auto no-scrollbar border-t border-stone-100 bg-white">
+          {chat?.type === 'CHANNEL' && !activeThread && (
+            <>
+              <button
+                onClick={() => onAction?.('ASK')}
+                className="flex-shrink-0 flex items-center gap-2 px-4 py-2 bg-stone-900 text-white rounded-full text-[10px] font-black uppercase tracking-widest shadow-md hover:bg-black transition-all"
+              >
+                <Plus size={12} className="text-amber-400" />
+                <span>Ask for Need</span>
+              </button>
+              <button
+                onClick={() => onAction?.('SHARE')}
+                className="flex-shrink-0 flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-full text-[10px] font-black uppercase tracking-widest shadow-md hover:bg-emerald-700 transition-all"
+              >
+                <Package size={12} />
+                <span>Give Away</span>
+              </button>
+              <button
+                onClick={() => setShowPollCreator(true)}
+                className="flex-shrink-0 flex items-center gap-2 px-4 py-2 bg-amber-400 text-stone-900 rounded-full text-[10px] font-black uppercase tracking-widest shadow-md hover:bg-amber-500 transition-all"
+              >
+                <BarChart2 size={12} />
+                <span>Create Poll</span>
+              </button>
+            </>
+          )}
+          {activeThread && (
+            <div className="flex items-center gap-2 px-4 py-2 bg-stone-100 text-stone-500 rounded-full text-[10px] font-black uppercase tracking-widest italic">
+              <MessageSquare size={12} />
+              <span>Replying to thread</span>
+            </div>
+          )}
+          {!activeThread && quickMessages.map((msg, i) => (
+            <button
+              key={i}
+              onClick={() => sendMessage(msg)}
+              className="flex-shrink-0 px-4 py-2 bg-white border border-stone-100 rounded-full text-[10px] font-bold text-stone-500 hover:border-stone-900 hover:text-stone-900 transition-all shadow-sm whitespace-nowrap"
+            >
+              {msg}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <form 
+        onSubmit={handleSend}
+        className="p-4 bg-white border-t border-stone-100 flex items-center gap-2"
+      >
+        <button type="button" className="text-stone-500 p-2 hover:text-stone-700 transition-colors">
+          <Smile size={20} />
+        </button>
+        <input 
+          type="text" 
+          placeholder="Type a message..."
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          className="flex-1 bg-stone-100 border-none rounded-2xl px-4 py-3 text-sm text-stone-900 placeholder:text-stone-400 focus:ring-1 focus:ring-stone-900 outline-none"
+        />
+        <button 
+          type="submit"
+          className={`w-10 h-10 flex items-center justify-center rounded-full transition-all shadow-md ${
+            text.trim() 
+              ? 'bg-stone-900 text-white hover:bg-stone-800' 
+              : 'bg-stone-200 text-stone-400 cursor-not-allowed'
+          }`}
+          disabled={!text.trim()}
+        >
+          <Send size={18} />
+        </button>
+      </form>
+    </div>
+  );
+}

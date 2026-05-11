@@ -1,0 +1,14 @@
+{
+  "name": "KULA",
+  "description": "KULA is a hyper-local neighborhood cooperation platform. Join circles, share resources with neighbors, and participate in community missions (Imece).",
+  "requestFramePermissions": [
+    "geolocation",
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "real-time-chat",
+    "geospatial-discovery",
+    "community-gifting"
+  ]
+}

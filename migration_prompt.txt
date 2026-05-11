@@ -1,0 +1,172 @@
+# Full-Stack Application Migration Prompt: Neighborhood Network
+
+**System Role:** You are an expert Full-Stack Software Engineer and UI/UX Architect. Your task is to rebuild and incrementally reconstruct a completely comprehensive neighborhood-focused social network application. 
+
+**Application Mission:** Facilitate genuine, localized connections where users can share resources, ask for help, organize community action ("Imece"), and find local activities. It is designed to be a highly local, community-oriented utility rather than an infinite-scroll global forum.
+
+---
+
+## 1. Project Art Direction & Aesthetic Rules
+It is **CRITICAL** that you follow these constraints unconditionally. Do not use generic corporate SaaS components. Keep the design warm, human, and grassroots.
+
+*   **Vibe & Aesthetic:** Analog, warm, grassroots, community-oriented. Think "Berlin local neighborly vibe" (Altbau apartments, DIY, street art, Tempelhofer Feld, urban gardens, vintage finds, community bike fixing). Honest, unpolished, and welcoming.
+*   **Color Palette Guidance:** 
+    *   Backgrounds: Warm neutrals (stone-50, cream, warm gray/stone). 
+    *   Accents: Earthy tones (emerald greens, warm terracotta, soft mustard yellows, muted purples, and rich wood/leather browns like `#c1a077`).
+    *   **Rule:** Avoid harsh neon, bright blue/purple gradients, or pure cyber/tech colors. 
+*   **UI Architecture:** 
+    *   Borders: Soft, human rounded corners (`rounded-2xl`, `rounded-[2rem]`, `rounded-[2.5rem]`).
+    *   Shadows: Gentle, warm shadows (`shadow-sm`, soft offsets), avoiding harsh crisp drop shadows.
+    *   Layouts: Keep the UI structured but welcoming using organic bento grids and clean, legible typography. 
+    *   Typography: Primary font `Inter` (sans-serif), but use a `serif` font (like Playfair Display or a system serif) for high-level Headings/Titles to evoke an editorial, community-newsletter feel.
+
+---
+
+## 2. Tech Stack Requirements
+*   **Framework:** React 18+ with Vite (TypeScript).
+*   **Styling:** Tailwind CSS. 
+*   **Icons:** Lucide-React.
+*   **Animation:** Framer Motion (`motion` components for dragging/swiping/transitions).
+*   **Backend / BaaS:** Firebase (Authentication, Firestore Database, Storage if applicable).
+*   **Routing:** React Router DOM (or conditional rendering via a main App Shell, prefer standard routing if rebuilding from scratch).
+*   **Maps:** A basic map provider (like Leaflet with `react-leaflet`) for spatial data plotting.
+
+---
+
+## 3. Data Schema & Firestore Structures
+Here is the core entity blueprint. Ensure Firestore rules evaluate these exact schema types.
+
+```typescript
+export interface UserProfile {
+  uid: string;
+  displayName: string;
+  photoURL: string | null;
+  bio: string;
+  location?: { lat: number; lng: number };
+  rating: number; // e.g., 5.0
+  reviewCount: number;
+  createdAt: any; // Firestore Timestamp
+  isAdmin: boolean;
+  isOrganization?: boolean;
+  lookoutFor?: string[]; // tags of what they need
+  thePersonFor?: string[]; // tags of what they provide
+  defaultReach?: ('VICINITY' | 'ALL_CIRCLES' | 'SPECIFIC_CIRCLES')[];
+  joinedCircles?: string[]; // Array of circle IDs
+  hasCompletedOnboarding?: boolean;
+}
+
+export type ItemType = 'ASK' | 'SHARE' | 'IMECE' | 'MISSION' | 'JOIN' | 'CIRCLE_INVITE';
+export type ItemStatus = 'ACTIVE' | 'MATCHED' | 'COMPLETED' | 'ARCHIVED';
+
+export interface Item {
+  id: string;
+  ownerId: string; // Refers to users
+  title: string;
+  description: string;
+  type: ItemType;
+  category: string;
+  images: string[];
+  status: ItemStatus;
+  location: { lat: number; lng: number }; // Precise coordinates
+  reachTypes: ('VICINITY' | 'ALL_CIRCLES' | 'SPECIFIC_CIRCLES')[];
+  targetCircles?: string[]; // Included if reach is SPECIFIC_CIRCLES
+  likes?: string[]; // Array of UIDs who swiped right
+  createdAt: any;
+}
+
+export interface Circle {
+  id: string;
+  creatorId: string;
+  name: string;
+  description: string;
+  type: 'PUBLIC' | 'PRIVATE' | 'HIDDEN';
+  location: { lat: number; lng: number };
+  radius: number; 
+  members: string[]; // List of UIDs
+  createdAt: any;
+}
+
+export interface Chat {
+  id: string;
+  participants: string[]; // Array of UIDs
+  type: 'DIRECT' | 'CHANNEL';
+  itemId?: string; // If this chat was spawned from a specific Item action
+  circleId?: string; // If this is a group chat for a Circle
+  lastMessage: string;
+  lastMessageAt: any;
+  unreadCount?: Record<string, number>;
+}
+```
+
+---
+
+## 4. Key Features & Product Mechanics
+
+### 1. The App Shell & Navigation
+*   A responsive shell that features a Bottom Navigation Bar on mobile (`absolute bottom-0 w-full bg-white/80 backdrop-blur-md`) and a standard sidebar or top bar on desktop.
+*   **Global Layout Modes:** The primary app functions are Feed/Discovery, Circles, Create (Post), Chats, and Profile.
+
+### 2. Discovery Module (Cards & Map)
+*   **Swipe Interface (Tinder for Neighborhoods):** A dynamic stack of cards powered by `framer-motion` (`drag` prop). 
+    *   Drag Right = **YES** (Like / Interested / I can help).
+    *   Drag Left = **NOPE** (Not interested).
+    *   Drag Up = **BRIDGE** (Share/forward to someone else who might be interested).
+*   **Map Fallback:** A toggle switch to transition from the Swipeable Cards Deck to a 2D Map View showing markers for locally active Asks, Shares, and Missions.
+*   **Radius Filtering:** A global range slider or filter to limit the items to 1km, 5km, or 10km based on the user's saved device location.
+
+### 3. Posting / Item Creation ("The Megaphone")
+*   Floating action button or center nave button to "Create". 
+*   User chooses intent: 
+    *   **Ask:** Needs a tool or help.
+    *   **Share:** Giving away leftovers, plants, offering a drill. 
+    *   **Imece:** A collaborative neighborhood task (e.g., "Let's clean the park together").
+*   Privacy/Reach Control: User sets the item to broadcast to the "Vicinity" (local radius) or restricted strictly into a "Circle" they are part of.
+
+### 4. Profiles & Standby Matches
+*   **Tags:** Users list what they are "Looking out for" (`lookoutFor`) and what they are "The person for" (`thePersonFor`). 
+*   **Smart Matching:** If Alice posts an Ask for a "Drill", and Bob's `thePersonFor` includes "Tools", Bob gets a real-time notification/highlight indicating a standby match in his vicinity.
+
+### 5. Chat System
+*   Real-time chat overlay or sliding panel.
+*   A `ChatsList` component listening to Firestore `chats` where `participants array-contains user.uid`.
+*   A `ChatRoom` component for messages. Messages have `senderId`, `text`, `createdAt`, and `type` (e.g., 'SYSTEM_MATCH', 'TEXT').
+
+### 6. Circles (Micro-communities)
+*   Neighborhoods within neighborhoods. 
+*   Users can create or join a "Circle" (e.g., "Parkstrasse Gardeners"). 
+*   Provides an isolated Feed/Discovery view and an isolated Chat channel.
+
+---
+
+## 5. Execution Strategy & Incremental Build Instructions
+
+To avoid context limits, hallucination, and massive spaghetti code, you must execute this migration **Iteratively in Phases**. 
+
+When executing, follow these phases. Do not move to the next phase until the application successfully compiles and verifies the previous one. 
+
+**Phase 1: Project Scaffolding & Theme Implementation**
+*   Initialize Vite + React + Tailwind + Lucide + Framer Motion. 
+*   Define the `tailwind.config` / CSS root values matching the Analog/Berlin grassroots aesthetic (Custom colors, border radii, Inter + Serif font setup).
+*   Set up Firebase Auth & Firestore contexts (`lib/firebase.ts`, `hooks/useAuth.tsx`).
+
+**Phase 2: Authentication & Onboarding Shell**
+*   Create a welcoming login screen. 
+*   If new user: route them through an Onboarding Flow (Set Name, Base Location with browser geolocation, set Tags).
+*   Build the Main App Shell with Bottom Navigation (`Home`, `Search`, `Plus/Create`, `Chat`, `Profile`).
+
+**Phase 3: Item Creation (Form) & Core Data Upload**
+*   Build the `PostItem` creation drawer/modal.
+*   Wire it up to create documents in the `items` Firestore collection.
+
+**Phase 4: The Discovery Feed & Swiper**
+*   Build the `Discovery` component fetching from `items`.
+*   Implement `framer-motion` draggable cards (YES/NOPE logic).
+*   **CRITICAL:** Ensure the UI feels playful but organic, using the stated rounded aesthetics and warm backgrounds.
+
+**Phase 5: Messaging & Notifications**
+*   Implement `ChatsList` and `ChatRoom`.
+*   Hook up the "YES" swipe action in Discovery to automatically initialize a Chat document between the swiper and the post owner. 
+
+**Phase 6: Circles & Profiles**
+*   Build profile screens.
+*   Add the Circles feature to allow filtering items specifically to a Circle ID instead of global geographic radius.

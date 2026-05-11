@@ -1,0 +1,187 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information and settings",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "bio": { "type": "string" },
+        "location": { "type": "object" },
+        "rating": { "type": "number" },
+        "reviewCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "isAdmin": { "type": "boolean" },
+        "isOrganization": { "type": "boolean" },
+        "isVerified": { "type": "boolean" },
+        "orgType": { "type": "string", "enum": ["SHELTER", "CHARITY", "SOCIAL_ENTERPRISE", "OTHER"] },
+        "defaultReach": { "type": "array", "items": { "type": "string", "enum": ["VICINITY", "ALL_CIRCLES", "SPECIFIC_CIRCLES"] } },
+        "joinedCircles": { "type": "array" }
+      },
+      "required": ["uid", "displayName", "createdAt"]
+    },
+    "Item": {
+      "title": "Item",
+      "description": "An item being shared or a need being asked for",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "type": { "type": "string", "enum": ["ASK", "SHARE", "IMECE", "MISSION", "JOIN"] },
+        "category": { "type": "string" },
+        "images": { "type": "array" },
+        "status": { "type": "string", "enum": ["ACTIVE", "MATCHED", "COMPLETED", "ARCHIVED"] },
+        "location": { "type": "object" },
+        "isFeatured": { "type": "boolean" },
+        "reachTypes": { "type": "array", "items": { "type": "string", "enum": ["VICINITY", "ALL_CIRCLES", "SPECIFIC_CIRCLES"] } },
+        "targetCircles": { "type": "array" },
+        "circleId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "title", "type", "status", "createdAt"]
+    },
+    "Swipe": {
+      "title": "Swipe",
+      "description": "An interaction where a user swipes on an item",
+      "type": "object",
+      "properties": {
+        "itemId": { "type": "string" },
+        "swiperId": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "type": { "type": "string", "enum": ["LIKE", "PASS"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["itemId", "swiperId", "ownerId", "type", "createdAt"]
+    },
+    "Chat": {
+      "title": "Chat",
+      "description": "A conversation between users regarding an item or within a circle",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "participants": { "type": "array" },
+        "itemId": { "type": "string" },
+        "circleId": { "type": "string" },
+        "type": { "type": "string", "enum": ["DIRECT", "CHANNEL"] },
+        "channelName": { "type": "string" },
+        "lastMessage": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["participants", "type", "updatedAt"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "An individual chat message or poll",
+      "type": "object",
+      "properties": {
+        "chatId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "text": { "type": "string" },
+        "type": { "type": "string", "enum": ["TEXT", "POLL", "SYSTEM", "URGENT"] },
+        "replyToId": { "type": "string" },
+        "replyToText": { "type": "string" },
+        "replyCount": { "type": "number" },
+        "poll": {
+          "type": "object",
+          "properties": {
+            "question": { "type": "string" },
+            "options": { "type": "object" }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["chatId", "senderId", "createdAt"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "A rating and review for a user/transaction",
+      "type": "object",
+      "properties": {
+        "reviewerId": { "type": "string" },
+        "revieweeId": { "type": "string" },
+        "itemId": { "type": "string" },
+        "rating": { "type": "number" },
+        "comment": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["reviewerId", "revieweeId", "itemId", "rating", "createdAt"]
+    },
+    "Circle": {
+      "title": "Circle",
+      "description": "A group of users sharing a specific context (neighborhood, hobby, etc.)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "creatorId": { "type": "string" },
+        "privacy": { "type": "string", "enum": ["PUBLIC", "PRIVATE", "HIDDEN"] },
+        "isOrganizationLed": { "type": "boolean" },
+        "memberCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "creatorId", "privacy", "createdAt"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "A user alert",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "type": { "type": "string" },
+        "content": { "type": "string" },
+        "isRead": { "type": "boolean" },
+        "link": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "type", "content", "isRead", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/items/{itemId}": {
+      "schema": "Item",
+      "description": "Shared items and needs"
+    },
+    "/swipes/{swipeId}": {
+      "schema": "Swipe",
+      "description": "User swipes on items"
+    },
+    "/chats/{chatId}": {
+      "schema": "Chat",
+      "description": "Chat sessions"
+    },
+    "/chats/{chatId}/messages/{messageId}": {
+      "schema": "Message",
+      "description": "Messages within a chat"
+    },
+    "/chats/{chatId}/messages/{messageId}/replies/{replyId}": {
+      "schema": "Message",
+      "description": "Replies to a specific message (Slack-style threads)"
+    },
+    "/reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "User reviews"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "User notifications"
+    },
+    "/circles/{circleId}": {
+      "schema": "Circle",
+      "description": "Community circles"
+    },
+    "/circles/{circleId}/members/{userId}": {
+      "schema": "User",
+      "description": "Members of a circle"
+    }
+  }
+}
