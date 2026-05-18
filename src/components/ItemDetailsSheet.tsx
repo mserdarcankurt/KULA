@@ -1,3 +1,33 @@
+/**
+ * FILE: ItemDetailsSheet.tsx
+ * ROLE IN KULA: The "Item Inspection Panel" — full-screen detail view for any item.
+ * 
+ * CIRCUIT B (Neighborhood Pulse):
+ *   When a user taps an item in Discovery.tsx, Feed.tsx, or PublicProfile.tsx,
+ *   this bottom-sheet slides up to show the full item details + a comment thread.
+ * 
+ * CONTENT SECTIONS:
+ *   1. HERO IMAGE: Full-width with fallback from artDirection.ts
+ *   2. TYPE/CATEGORY BADGES: Color-coded chips (SHARE=green, ASK=blue, etc.)
+ *   3. TITLE + RADAR BUTTONS: Quick-add the item's category to lookout/standby
+ *   4. DESCRIPTION CARD: Full text + owner info with ConnectionBadge (trust degree)
+ *   5. TEMPORAL DATA: expiresAt, eventTime, eventEndTime (if present)
+ *   6. "Bridge to Profile" BUTTON: Opens owner's PublicProfile.tsx
+ *   7. COMMENTS THREAD: Real-time via onSnapshot on items/{id}/comments
+ *      - Top-level comments
+ *      - Nested replies (single level, parentId-based)
+ * 
+ * OWNER ACTIONS:
+ *   If the current user owns the item, a "Delete Item" button appears in the header.
+ *   Deleting sets status → DELETED (soft delete, preserving data for audits).
+ * 
+ * DATA FLOW:
+ *   READS: items/{itemId}/comments (onSnapshot, ordered by createdAt)
+ *   WRITES: items/{itemId}/comments (addDoc with userId, userName, text, parentId)
+ *   WRITES: users/{uid}.lookoutRules or standbyRules (radar quick-add)
+ * 
+ * CALLED BY: Discovery.tsx, Feed.tsx, PublicProfile.tsx, Profile.tsx
+ */
 import React, { useState, useEffect } from 'react';
 import { Item } from '../types';
 import { X, Send, Network, MessageCircle, MapPin, Calendar } from 'lucide-react';
@@ -7,6 +37,7 @@ import { collection, addDoc, serverTimestamp, query, orderBy, onSnapshot, doc, u
 import { formatDistanceToNow } from 'date-fns';
 import { getFallbackImage } from '../lib/artDirection';
 import { OwnerName } from './OwnerName';
+import ConnectionBadge from './ConnectionBadge';
 
 interface Comment {
   id: string;
@@ -136,12 +167,31 @@ export function ItemDetailsSheet({ item, onClose, onViewProfile }: ItemDetailsSh
               <p className="text-xs text-stone-500 mt-1">Join the conversation</p>
             </div>
           </div>
-          <button 
-            onClick={onClose}
-            className="w-10 h-10 bg-stone-100 rounded-full flex items-center justify-center text-stone-400 hover:text-stone-600 hover:bg-stone-200 transition-colors"
-          >
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-2">
+            {user?.uid === item.ownerId && (
+              <button 
+                onClick={async () => {
+                  if (window.confirm("Are you sure you want to remove this item from the neighborhood?")) {
+                    try {
+                      await updateDoc(doc(db, 'items', item.id), { status: 'DELETED' });
+                      onClose();
+                    } catch (err) {
+                      console.error("Error deleting item:", err);
+                    }
+                  }
+                }}
+                className="px-3 py-1.5 bg-rose-50 text-rose-600 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-rose-100 transition-colors"
+              >
+                Delete Item
+              </button>
+            )}
+            <button 
+              onClick={onClose}
+              className="w-10 h-10 bg-stone-100 rounded-full flex items-center justify-center text-stone-400 hover:text-stone-600 hover:bg-stone-200 transition-colors"
+            >
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto pb-6">
@@ -215,6 +265,7 @@ export function ItemDetailsSheet({ item, onClose, onViewProfile }: ItemDetailsSh
                     <span className="text-xs font-bold text-stone-600 group-hover/name:text-indigo-600 underline-offset-4 decoration-2">
                       <OwnerName ownerId={item.ownerId} initialName={item.ownerName} className="group-hover/name:underline" />
                     </span>
+                    <ConnectionBadge targetUserId={item.ownerId} className="ml-2" />
                   </button>
                   {item.createdAt && (
                     <div className="flex items-center gap-1.5 text-xs text-stone-400">

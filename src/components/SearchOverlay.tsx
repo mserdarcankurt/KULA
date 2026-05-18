@@ -1,3 +1,42 @@
+/**
+ * FILE: SearchOverlay.tsx
+ * ROLE IN KULA: The "Programmable Radar" — search + intelligent matching system.
+ * 
+ * THIS COMPONENT SERVES TWO PURPOSES:
+ * 
+ * 1. SEARCH ENGINE:
+ *    Queries the `items` collection (status==ACTIVE, limit 50) then filters
+ *    client-side by title, category, and description against the search term.
+ *    Also queries all users to find neighbors whose lookout/standby tags match.
+ *    
+ *    NOTE: This is a client-side search — Firestore doesn't support full-text search.
+ *    For production scale, this should migrate to Algolia or Typesense.
+ * 
+ * 2. RADAR MANAGEMENT (Lookout & Standby):
+ *    - LOOKOUT ("On the lookout for..."): "I NEED this" — e.g., "drill", "gardening help"
+ *      → Stored as lookoutRules[] on the user profile
+ *      → When someone posts an item matching your lookout, you get notified
+ *    - STANDBY ("I am the person for..."): "I HAVE this" — e.g., "I can fix bikes"
+ *      → Stored as standbyRules[] on the user profile
+ *      → When someone searches for your standby keyword, YOU appear in results
+ * 
+ *    Each rule has:
+ *      - keyword: the search term
+ *      - reachTypes: VICINITY (distance-based) and/or ALL_CIRCLES
+ *      - radius: km range (if VICINITY)
+ *      - privacy: PUBLIC (others can see) or PRIVATE (only notify me)
+ *    Rules are capped at 20 per type to prevent abuse.
+ * 
+ * TOUR INTEGRATION:
+ *    First-time users get a Joyride tour explaining:
+ *    1. Search input (#tour-search-input)
+ *    2. Radar concept (#tour-search-radar)
+ *    3. Lookout system (#tour-search-lookout)
+ *    4. Standby system (#tour-search-standby)
+ *    Controlled by hasCompletedSearchTour on the user profile.
+ * 
+ * CALLED BY: Header.tsx (search icon click)
+ */
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { collection, query, where, getDocs, limit, doc, updateDoc } from 'firebase/firestore';

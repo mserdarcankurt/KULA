@@ -1,3 +1,43 @@
+/**
+ * FILE: InviteGate.tsx
+ * ROLE IN KULA: The "Bouncer" — ensures every new user enters through a trusted connection.
+ * 
+ * CIRCUIT A (Sacred Space Gatekeeper):
+ *   This is Step 2 of the onboarding cascade. App.tsx shows this component when:
+ *     - The user IS logged in (has a Firebase Auth session)
+ *     - BUT their profile has NO `hostId` (nobody has vouched for them yet)
+ *   
+ *   Without a hostId, the user cannot proceed to the main app. This is the
+ *   CORE MECHANISM that makes KULA invite-only.
+ * 
+ * TWO-PHASE FLOW:
+ *   Phase 1 — CODE LOOKUP:
+ *     User enters a 6-character invite code (e.g., "XK4M9P").
+ *     handleLookup() queries Firestore: `users WHERE inviteCode == code`
+ *     If found, we show the host's name and photo for confirmation.
+ *     If not found, we show an error.
+ *     If the user enters their OWN code, we catch that too ("That's your own code!").
+ *   
+ *   Phase 2 — CONFIRMATION:
+ *     User sees who invited them and clicks "Request to Join".
+ *     handleConfirm() updates their profile with:
+ *       hostId: the host's UID (creates the Lineage Tree link)
+ *       hostStatus: 'PENDING' (host hasn't approved yet)
+ *     
+ *     After this updateDoc, the onSnapshot listener in useAuth.tsx detects the change.
+ *     App.tsx then switches to WaitingRoom.tsx (because hostStatus is 'PENDING').
+ * 
+ * DOWNSTREAM EFFECTS:
+ *   Setting `hostId` creates a link in the trust graph:
+ *     - useTrustNetwork.ts will find this as an INVITE edge
+ *     - LineageTree.tsx will draw a line from host to this user
+ *     - ConnectionBadge.tsx will show "1st Degree" between them
+ * 
+ * SECURITY:
+ *   The invite code system is checked CLIENT-SIDE against Firestore.
+ *   The real security is in firestore.rules — a user with hostStatus 'PENDING'
+ *   has limited write access until an admin or host approves them.
+ */
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { useAuth } from '../hooks/useAuth';
@@ -10,8 +50,14 @@ export default function InviteGate() {
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // Phase tracking: null = entering code, object = confirming host
   const [resolvedHost, setResolvedHost] = useState<{ uid: string; name: string; photo: string | null } | null>(null);
 
+  /**
+   * PHASE 1: Look up the invite code in Firestore.
+   * Queries the `users` collection for a document where inviteCode matches.
+   * Each user gets a unique inviteCode when they complete onboarding.
+   */
   const handleLookup = async () => {
     if (!code.trim() || !user) return;
     setLoading(true);
@@ -19,16 +65,7 @@ export default function InviteGate() {
     setResolvedHost(null);
 
     try {
-      // FOUNDER BYPASS
       const upperCode = code.trim().toUpperCase();
-      if (upperCode === 'KULA-FOUNDER' || upperCode === 'ROOT') {
-        await updateDoc(doc(db, 'users', user.uid), {
-          hostId: null,
-          hostStatus: 'APPROVED',
-          isAdmin: true
-        });
-        return;
-      }
 
       const q = query(
         collection(db, 'users'),
@@ -43,6 +80,7 @@ export default function InviteGate() {
       }
 
       const hostDoc = snap.docs[0];
+      // Prevent using your own invite code
       if (hostDoc.id === user.uid) {
         setError("That's your own code! Ask a neighbor for theirs.");
         setLoading(false);
@@ -50,6 +88,7 @@ export default function InviteGate() {
       }
 
       const hostData = hostDoc.data();
+      // Store the host info for the confirmation screen
       setResolvedHost({
         uid: hostDoc.id,
         name: hostData.displayName || 'A neighbor',
@@ -63,16 +102,22 @@ export default function InviteGate() {
     }
   };
 
+  /**
+   * PHASE 2: Confirm the host and request to join.
+   * Updates the current user's profile with the host's UID and sets status to PENDING.
+   * After this write, useAuth.tsx's onSnapshot fires → App.tsx transitions to WaitingRoom.tsx.
+   */
   const handleConfirm = async () => {
     if (!resolvedHost || !user) return;
     setLoading(true);
 
     try {
       await updateDoc(doc(db, 'users', user.uid), {
-        hostId: resolvedHost.uid,
-        hostStatus: 'PENDING'
+        hostId: resolvedHost.uid,        // Creates the Lineage Tree link
+        hostStatus: 'PENDING'            // Host must approve before full access
       });
       // onSnapshot in useAuth will automatically update profile
+      // App.tsx will detect hostStatus === 'PENDING' and show WaitingRoom
     } catch (err) {
       console.error('Failed to set host:', err);
       setError('Failed to connect. Please try again.');
@@ -100,7 +145,7 @@ export default function InviteGate() {
           </p>
         </div>
 
-        {/* Greeting */}
+        {/* Greeting — shows the user's profile if available */}
         {profile && (
           <div className="flex items-center justify-center gap-3 py-2">
             <div className="w-10 h-10 rounded-xl bg-stone-100 overflow-hidden flex-shrink-0">
@@ -118,7 +163,7 @@ export default function InviteGate() {
           </div>
         )}
 
-        {/* Code Input */}
+        {/* Code Input (Phase 1) OR Host Confirmation (Phase 2) */}
         {!resolvedHost ? (
           <div className="space-y-4">
             <div className="flex gap-2">
@@ -163,7 +208,7 @@ export default function InviteGate() {
             )}
           </div>
         ) : (
-          /* Host Confirmation */
+          /* Host Confirmation (Phase 2) — shows who invited you */
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -212,7 +257,7 @@ export default function InviteGate() {
           </motion.div>
         )}
 
-        {/* Sign out option */}
+        {/* Sign out option — always available in case user logged in with wrong account */}
         <button
           onClick={logout}
           className="flex items-center justify-center gap-2 text-[10px] text-stone-400 hover:text-stone-600 font-bold uppercase tracking-widest transition-colors mx-auto pt-4"

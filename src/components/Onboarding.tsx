@@ -1,3 +1,29 @@
+/**
+ * FILE: Onboarding.tsx
+ * ROLE IN KULA: The "Welcome Tour" — a swipeable tutorial that introduces KULA's features.
+ * 
+ * CIRCUIT A (Sacred Space Gatekeeper):
+ *   This is Step 4 of the onboarding cascade. App.tsx shows this when:
+ *     - User IS logged in, HAS a hostId, hostStatus IS 'APPROVED'
+ *     - BUT hasCompletedOnboarding is false (they haven't done the tutorial yet)
+ * 
+ * CONNECTION TO artDirection.ts:
+ *   Each step uses a fallback image from ART_DIRECTION.fallbacks (e.g., Community, Equipment).
+ *   This ensures the onboarding looks rich and warm even without custom photos.
+ *   The images follow the "Berlin Analog" aesthetic defined in AGENTS.md.
+ * 
+ * COMPLETION FLOW:
+ *   When the user reaches the last step and clicks "Start Exploring":
+ *   1. handleNext() updates their Firestore profile: hasCompletedOnboarding = true
+ *   2. useAuth.tsx's onSnapshot detects this change
+ *   3. App.tsx re-evaluates and shows the main app shell (Explore, Circles, etc.)
+ *   4. TourGuide.tsx then takes over with interactive tooltips on the real UI
+ * 
+ * ANIMATION:
+ *   Uses AnimatePresence for smooth transitions between steps.
+ *   Background images cross-fade with a blur effect.
+ *   The progress dots at the bottom animate width changes.
+ */
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { doc, updateDoc } from 'firebase/firestore';

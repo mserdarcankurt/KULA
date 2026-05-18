@@ -1,19 +1,54 @@
+/**
+ * FILE: Welcome.tsx
+ * ROLE IN KULA: The "Front Door" — the very first screen any visitor sees.
+ * 
+ * CIRCUIT A (Sacred Space Gatekeeper):
+ *   This component is shown ONLY when the user is NOT logged in.
+ *   App.tsx checks `if (!user) → show Welcome`. Once the user clicks
+ *   "Sign in with Google", useAuth.tsx fires signInWithPopup(), and
+ *   App.tsx switches away from this screen instantly via onAuthStateChanged.
+ * 
+ * DESIGN INTENT:
+ *   The visual language here sets the TONE for the entire experience:
+ *   - The tilted "K" logo (rotate-12) signals playfulness, not corporate.
+ *   - Serif italic tagline ("reimagined for your neighborhood") echoes the
+ *     artDirection.ts warm/analog aesthetic.
+ *   - The two info buttons ("Near you" / "Gift economy") use toggle state
+ *     to educate without overwhelming — a micro-interaction pattern.
+ * 
+ * ANIMATION:
+ *   Uses Framer Motion (motion/react) for the entry animation.
+ *   The entire card fades in and slides up (y: 20→0) over 0.8s.
+ *   The info text uses AnimatePresence for smooth enter/exit transitions.
+ * 
+ * DOWNSTREAM: After signIn() succeeds:
+ *   1. useAuth.tsx creates a new UserProfile in Firestore (if first time)
+ *   2. App.tsx detects the new profile
+ *   3. If no hostId → user is sent to InviteGate.tsx
+ *   4. If hostStatus PENDING → user is sent to WaitingRoom.tsx
+ *   5. If approved but !hasCompletedOnboarding → Onboarding.tsx
+ *   6. Otherwise → main app shell (Explore, Circles, etc.)
+ */
 import React, { useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function Welcome() {
+  // signIn is the Google OAuth popup trigger from useAuth.tsx
   const { signIn } = useAuth();
+  // Local toggle state for the educational info panels
   const [info, setInfo] = useState<'NEAR' | 'GIFT' | null>(null);
 
   return (
     <div className="min-h-screen bg-stone-50 flex items-center justify-center p-6 text-center">
+      {/* Entry animation: fade in + slide up */}
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.8 }}
         className="max-w-md w-full space-y-8"
       >
+        {/* Branding block — the tilted K logo and serif tagline */}
         <div className="space-y-4">
           <div className="w-20 h-20 bg-[#5A5A40] rounded-3xl mx-auto flex items-center justify-center shadow-lg transform rotate-12">
             <span className="text-white font-bold text-4xl">K</span>
@@ -22,12 +57,20 @@ export default function Welcome() {
           <p className="text-stone-500 text-lg serif italic">The traditional gift economy, reimagined for your neighborhood.</p>
         </div>
 
+        {/* CTA section */}
         <div className="space-y-6 pt-12">
           <p className="text-sm text-stone-400 uppercase tracking-[0.2em] font-medium">Join the circle</p>
+          {/* 
+            THE CRITICAL BUTTON: Clicking this calls signIn() from useAuth.tsx,
+            which triggers Firebase's signInWithPopup(auth, googleProvider).
+            On success, onAuthStateChanged fires → profile is created or loaded →
+            App.tsx re-renders and navigates away from this screen.
+          */}
           <button 
             onClick={signIn}
             className="w-full py-4 bg-stone-900 text-white border-2 border-stone-900 rounded-2xl font-black text-xs uppercase tracking-[0.2em] shadow-xl hover:bg-black transition-all transform active:scale-[0.98] flex items-center justify-center gap-3"
           >
+            {/* Google "G" icon — inline SVG for consistency across browsers */}
             <svg className="w-5 h-5 text-amber-400" viewBox="0 0 24 24">
               <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
               <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
@@ -37,6 +80,7 @@ export default function Welcome() {
             <span className="text-white">Sign in with Google</span>
           </button>
           
+          {/* Educational info toggles — explain KULA's core concepts without navigation */}
           <div className="pt-8 space-y-4">
             <div className="grid grid-cols-2 gap-4 text-[9px] uppercase tracking-[0.2em] text-stone-400 font-black">
               <button 
@@ -59,6 +103,7 @@ export default function Welcome() {
               </button>
             </div>
             
+            {/* Animated info text — appears/disappears smoothly */}
             <AnimatePresence mode="wait">
               {info && (
                 <motion.p 

@@ -1,3 +1,38 @@
+/**
+ * FILE: Feed.tsx
+ * ROLE IN KULA: The "Scrollable Bulletin Board" — a list view of community items.
+ * 
+ * CIRCUIT B (Neighborhood Pulse):
+ *   While Discovery.tsx shows one card at a time (swipe interface), Feed.tsx shows
+ *   ALL matching items in a vertical scrolling list. Same data source (useItems.ts),
+ *   different UX pattern.
+ * 
+ * FILTERING PIPELINE:
+ *   1. useItems.ts fetches and distance-sorts all active items
+ *   2. Local/Global toggle filters by localRadius
+ *   3. Scope selector: ALL / LOCAL (VICINITY only) / CIRCLES / ORGS
+ *   4. Type filter: ALL / SHARE / ASK / JOIN / IMECE / MISSION
+ *   5. Text search: matches against title and description
+ * 
+ * FEATURED ITEMS:
+ *   Items with isFeatured=true (set by admins in AdminPanel.tsx) appear in a
+ *   horizontally-scrolling carousel at the top (dark cards with amber accents).
+ *   These are high-priority or urgent community items.
+ * 
+ * ITEM CARD INTERACTIONS:
+ *   Each ItemCard can trigger different actions based on item.type:
+ *   - ASK/SHARE: "View Profile" → opens PublicProfile.tsx
+ *   - IMECE: "Join İmece" → adds/removes user from participants array
+ *   - JOIN: "Join & RSVP" → creates interest + notification + chat
+ *   - MISSION: "Contact Org" → creates interest + notification + chat
+ *   - Clicking any card → opens ItemDetailsSheet.tsx for full view + comments
+ * 
+ * CIRCLE CONTEXT:
+ *   When `circleId` is provided (rendered inside Circles.tsx), the feed filters
+ *   to show only items belonging to that circle. The scope filters are hidden.
+ * 
+ * CALLED BY: Explore.tsx (FEED view mode), Circles.tsx (circle-specific feed)
+ */
 import React, { useState, useEffect } from 'react';
 import { useItems } from '../hooks/useItems';
 import { db } from '../lib/firebase';

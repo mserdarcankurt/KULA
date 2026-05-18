@@ -1,11 +1,47 @@
+/**
+ * FILE: PublicProfile.tsx
+ * ROLE IN KULA: The "Neighbor Card" — shows another user's public profile.
+ * 
+ * CIRCUIT C (Trust Fabric):
+ *   This component is the PRIMARY way users evaluate trust before interacting.
+ *   It shows:
+ *     1. Identity: Name, photo, org badge, bio
+ *     2. Trust Distance: ConnectionBadge (1st/2nd/3rd degree via BFS)
+ *     3. Trust Mosaic: Growth stage, exchange count, gratitude wall
+ *     4. Lookout/Standby tags: What this neighbor needs/offers
+ *     5. Active items: Their current posts (clickable → ItemDetailsSheet)
+ * 
+ * PRIVACY GATE:
+ *   Uses checkSymmetricVisibility() from trustGraph.ts to enforce network privacy.
+ *   If the target user's visibilityPreference is DEGREE_2 and you're 3 hops away,
+ *   the profile shows a "Private Profile" lock screen instead of their data.
+ * 
+ * VOUCH SYSTEM:
+ *   Users can "Vouch for Neighbor" — creates a PENDING vouch in the `vouches` collection.
+ *   The target user sees it in their Profile.tsx → pendingVouches section.
+ *   Accepted vouches create new edges in the trust graph, tightening connections.
+ *   States: NONE → PENDING → ACCEPTED (also tracks direction: SENT vs RECEIVED)
+ * 
+ * BLOCK SYSTEM:
+ *   Users can block neighbors. This adds the target's UID to blockedUsers array
+ *   on the blocker's profile. Blocked users are filtered out of feeds and chats.
+ * 
+ * NESTED PROFILES:
+ *   Clicking an item in the profile → ItemDetailsSheet → clicking another user
+ *   → opens ANOTHER PublicProfile on top (recursive). This creates a navigation
+ *   stack without a router.
+ * 
+ * CALLED BY: Discovery.tsx, Feed.tsx, ChatsList.tsx, Profile.tsx
+ */
 import React, { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { doc, getDoc, collection, query, where, orderBy, onSnapshot, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, orderBy, onSnapshot, updateDoc, arrayUnion, arrayRemove, addDoc, serverTimestamp } from 'firebase/firestore';
 import { UserProfile, Item } from '../types';
-import { X, Star, Award, MapPin, Shield, Tag, Heart, CheckCircle2, Clock, Ban, UserMinus, UserCheck, Instagram, Target, Sparkles } from 'lucide-react';
+import { X, Star, Award, MapPin, Shield, Tag, Heart, CheckCircle2, Clock, Ban, UserMinus, UserCheck, Instagram, Target, Sparkles, Lock } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { useAuth } from '../hooks/useAuth';
 import { getFallbackImage } from '../lib/artDirection';
+import { checkSymmetricVisibility } from '../lib/trustGraph';
 import TrustMosaicComponent from './TrustMosaic';
 import ConnectionBadge from './ConnectionBadge';
 import { ItemDetailsSheet } from './ItemDetailsSheet';
@@ -23,6 +59,11 @@ export default function PublicProfile({ userId, onClose }: PublicProfileProps) {
   const [isBlocking, setIsBlocking] = useState(false);
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
   const [nestedProfileId, setNestedProfileId] = useState<string | null>(null);
+  const [vouchStatus, setVouchStatus] = useState<'NONE' | 'PENDING' | 'ACCEPTED' | 'LOADING'>('LOADING');
+  const [vouchId, setVouchId] = useState<string | null>(null);
+  const [vouchDirection, setVouchDirection] = useState<'SENT' | 'RECEIVED' | null>(null);
+  const [isVouching, setIsVouching] = useState(false);
+  const [isPrivate, setIsPrivate] = useState(false);
 
   const isBlocked = myProfile?.blockedUsers?.includes(userId);
 
@@ -52,7 +93,19 @@ export default function PublicProfile({ userId, onClose }: PublicProfileProps) {
     async function fetchProfile() {
       const docSnap = await getDoc(doc(db, 'users', userId));
       if (docSnap.exists()) {
-        setProfile(docSnap.data() as UserProfile);
+        const targetData = docSnap.data() as UserProfile;
+        setProfile(targetData);
+        
+        // Privacy Check
+        if (user) {
+          const pref = myProfile?.visibilityPreference || 'PUBLIC';
+          const isVis = await checkSymmetricVisibility(user.uid, pref, userId);
+          if (!isVis) {
+            setIsPrivate(true);
+            setLoading(false);
+            return;
+          }
+        }
       }
     }
 
@@ -76,9 +129,105 @@ export default function PublicProfile({ userId, onClose }: PublicProfileProps) {
       setLoading(false);
     });
 
+    async function fetchVouchStatus() {
+      if (!user || user.uid === userId) {
+        setVouchStatus('NONE');
+        return;
+      }
+      
+      // Check if they are parent/child (which is inherently a vouch)
+      const targetDoc = await getDoc(doc(db, 'users', userId));
+      const targetData = targetDoc.data();
+      if (targetData?.hostId === user.uid || myProfile?.hostId === userId) {
+        setVouchStatus('ACCEPTED');
+        return;
+      }
+
+      // Check vouches collection
+      const q1 = query(collection(db, 'vouches'), where('fromUserId', '==', user.uid), where('toUserId', '==', userId));
+      const q2 = query(collection(db, 'vouches'), where('fromUserId', '==', userId), where('toUserId', '==', user.uid));
+      
+      const [snap1, snap2] = await Promise.all([getDocs(q1), getDocs(q2)]);
+      
+      if (!snap1.empty) {
+        setVouchStatus(snap1.docs[0].data().status);
+        setVouchId(snap1.docs[0].id);
+        setVouchDirection('SENT');
+      } else if (!snap2.empty) {
+        setVouchStatus(snap2.docs[0].data().status);
+        setVouchId(snap2.docs[0].id);
+        setVouchDirection('RECEIVED');
+      } else {
+        setVouchStatus('NONE');
+        setVouchId(null);
+        setVouchDirection(null);
+      }
+    }
+
     fetchProfile();
+    fetchVouchStatus();
     return unsubscribe;
-  }, [userId]);
+  }, [userId, user, myProfile]);
+
+  const handleVouch = async () => {
+    if (!user || isVouching) return;
+    setIsVouching(true);
+    try {
+      const vouchRef = await addDoc(collection(db, 'vouches'), {
+        fromUserId: user.uid,
+        toUserId: userId,
+        status: 'PENDING',
+        createdAt: serverTimestamp()
+      });
+      setVouchStatus('PENDING');
+      setVouchDirection('SENT');
+      setVouchId(vouchRef.id);
+
+      // Create a notification for the target user
+      const senderName = myProfile?.displayName || 'A neighbor';
+      await addDoc(collection(db, 'notifications'), {
+        userId: userId,
+        type: 'VOUCH_REQUEST',
+        content: `${senderName} wants to vouch for you as a trusted neighbor.`,
+        isRead: false,
+        link: '',
+        createdAt: serverTimestamp()
+      });
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsVouching(false);
+    }
+  };
+
+  const handleAcceptVouch = async () => {
+    if (!vouchId || isVouching) return;
+    setIsVouching(true);
+    try {
+      await updateDoc(doc(db, 'vouches', vouchId), {
+        status: 'ACCEPTED'
+      });
+      setVouchStatus('ACCEPTED');
+
+      // Notify the person who sent the vouch
+      const acceptorName = myProfile?.displayName || 'A neighbor';
+      const senderUid = vouchDirection === 'RECEIVED' ? userId : user?.uid;
+      if (senderUid && senderUid !== user?.uid) {
+        await addDoc(collection(db, 'notifications'), {
+          userId: senderUid,
+          type: 'VOUCH_ACCEPTED',
+          content: `${acceptorName} accepted your vouch! You are now connected neighbors.`,
+          isRead: false,
+          link: '',
+          createdAt: serverTimestamp()
+        });
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsVouching(false);
+    }
+  };
 
   if (loading && !profile) {
     return (
@@ -103,8 +252,25 @@ export default function PublicProfile({ userId, onClose }: PublicProfileProps) {
 
       <div className="flex-1 overflow-y-auto">
         <div className="p-8 pb-32 space-y-8">
-          <div className="flex flex-col items-center text-center space-y-6">
-            <div className="w-32 h-32 bg-stone-100 rounded-[2.5rem] overflow-hidden border-4 border-stone-50 shadow-xl">
+          {isPrivate ? (
+            <div className="flex flex-col items-center justify-center text-center py-20 space-y-6">
+              <div className="w-24 h-24 bg-stone-100 rounded-[2rem] flex items-center justify-center text-stone-300 mb-4 shadow-inner">
+                <Lock size={32} />
+              </div>
+              <h2 className="serif text-3xl font-bold text-stone-800">Private Profile</h2>
+              <p className="text-stone-400 italic max-w-xs text-sm">
+                This neighbor's network privacy settings limit who can view their profile.
+              </p>
+              {user && user.uid !== userId && !isBlocked && (
+                <div className="pt-4">
+                  <ConnectionBadge targetUserId={userId} showLineage={true} />
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-col items-center text-center space-y-6">
+                <div className="w-32 h-32 bg-stone-100 rounded-[2.5rem] overflow-hidden border-4 border-stone-50 shadow-xl">
               {profile.photoURL ? (
                 <img referrerPolicy="no-referrer" src={profile.photoURL} alt={profile.displayName} className="w-full h-full object-cover" />
               ) : (
@@ -123,7 +289,7 @@ export default function PublicProfile({ userId, onClose }: PublicProfileProps) {
               </div>
               
               <div className="flex justify-center mt-2">
-                <ConnectionBadge targetUserId={userId} />
+                <ConnectionBadge targetUserId={userId} showLineage={true} />
               </div>
               
               {user && user.uid !== userId && (
@@ -142,6 +308,43 @@ export default function PublicProfile({ userId, onClose }: PublicProfileProps) {
                     <><Ban size={12} /> Block Neighbor</>
                   )}
                 </button>
+              )}
+
+              {user && user.uid !== userId && !isBlocked && (
+                <div className="flex justify-center mt-2">
+                  {vouchStatus === 'NONE' && (
+                    <button
+                      onClick={handleVouch}
+                      disabled={isVouching}
+                      className="px-6 py-2 rounded-full font-black uppercase tracking-[0.2em] text-[8px] flex items-center gap-2 transition-all bg-emerald-50 text-emerald-600 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-50"
+                    >
+                      <Sparkles size={12} />
+                      {isVouching ? 'Vouching...' : 'Vouch for Neighbor'}
+                    </button>
+                  )}
+                  {vouchStatus === 'PENDING' && vouchDirection === 'SENT' && (
+                    <span className="px-6 py-2 rounded-full font-black uppercase tracking-[0.2em] text-[8px] flex items-center gap-2 transition-all bg-stone-50 text-stone-400 border border-stone-200">
+                      <Clock size={12} />
+                      Vouch Pending
+                    </span>
+                  )}
+                  {vouchStatus === 'PENDING' && vouchDirection === 'RECEIVED' && (
+                    <button
+                      onClick={handleAcceptVouch}
+                      disabled={isVouching}
+                      className="px-6 py-2 rounded-full font-black uppercase tracking-[0.2em] text-[8px] flex items-center gap-2 transition-all bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100 disabled:opacity-50"
+                    >
+                      <Sparkles size={12} />
+                      {isVouching ? 'Accepting...' : 'Accept Vouch'}
+                    </button>
+                  )}
+                  {vouchStatus === 'ACCEPTED' && (
+                    <span className="px-6 py-2 rounded-full font-black uppercase tracking-[0.2em] text-[8px] flex items-center gap-2 transition-all bg-emerald-600 text-white shadow-sm">
+                      <CheckCircle2 size={12} />
+                      Connected Neighbor
+                    </span>
+                  )}
+                </div>
               )}
 
               <div className="flex items-center justify-center gap-2 text-stone-400 font-bold text-[10px] uppercase tracking-widest mt-4">
@@ -268,9 +471,11 @@ export default function PublicProfile({ userId, onClose }: PublicProfileProps) {
               )}
             </div>
           </div>
+          </>
+          )}
         </div>
       </div>
-      {selectedItem && (
+      {selectedItem && !isPrivate && (
         <ItemDetailsSheet 
           item={selectedItem}
           onClose={() => setSelectedItem(null)}

@@ -1,3 +1,34 @@
+/**
+ * FILE: TourGuide.tsx
+ * ROLE IN KULA: The "Interactive Tutorial" — tooltip-based walkthrough of the real UI.
+ * 
+ * CIRCUIT A (Sacred Space Gatekeeper):
+ *   This is Step 5 — the FINAL onboarding step. It runs AFTER:
+ *     1. Login (Welcome.tsx)
+ *     2. Invite code (InviteGate.tsx)
+ *     3. Host approval (WaitingRoom.tsx)
+ *     4. Static tutorial (Onboarding.tsx)
+ *   
+ *   TourGuide overlays tooltips on the REAL app interface, pointing to
+ *   actual buttons and tabs. It only runs once — after completion,
+ *   it sets hasCompletedInteractiveTour = true in the user's profile.
+ * 
+ * HOW IT TARGETS UI ELEMENTS:
+ *   Each step has a CSS selector `target` (e.g., '#tour-global-search').
+ *   These IDs are placed on real UI elements:
+ *     - Header.tsx: #tour-global-search, #tour-notifications
+ *     - Explore.tsx: #tour-explore-views
+ *     - Navigation.tsx: #tour-home-tab, #tour-circles-tab, #tour-post-tab, etc.
+ *   Joyride highlights each target and shows an explanatory tooltip.
+ * 
+ * TIMING:
+ *   A 1-second delay (setTimeout) before starting ensures the real UI has
+ *   fully rendered and the DOM elements exist before Joyride tries to find them.
+ * 
+ * LIBRARY: react-joyride (Joyride component)
+ *   Styled to match the Berlin Analog aesthetic: stone backgrounds, rounded corners,
+ *   uppercase tracking, and the warm #c1a077 accent color for the primary button.
+ */
 import React, { useEffect, useState } from 'react';
 import { Joyride, Step, EventData, STATUS } from 'react-joyride';
 import { useAuth } from '../hooks/useAuth';

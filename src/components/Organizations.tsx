@@ -1,3 +1,32 @@
+/**
+ * FILE: Organizations.tsx
+ * ROLE IN KULA: The "Community Partners Directory" — lists verified organizations and their missions.
+ * 
+ * CIRCUIT B (Neighborhood Pulse) + Special MISSION type:
+ *   Organizations are regular user profiles with isOrganization=true and optional
+ *   isVerified=true (set by admins). They can post MISSION-type items that appear
+ *   both in the main feeds AND in this dedicated directory.
+ * 
+ * TWO VIEWS:
+ *   1. LIST: Shows all organization profiles (queried by isOrganization==true)
+ *      - Each org card has "View Profile" and "Chat" buttons
+ *      - Search filter on displayName
+ *   2. FEED: Shows all MISSION-type items across all circles
+ *      - Each mission card shows the org, description, participant count
+ *      - "Volunteer" button creates a chat with the org owner
+ * 
+ * DATA FLOW:
+ *   - Organization profiles: getDocs(users, where isOrganization==true) — one-time fetch
+ *   - Mission items: onSnapshot(items, where type==MISSION, status==ACTIVE) — real-time
+ *   - Chat initiation: chatService.getOrCreateChat() → navigates to chat
+ * 
+ * ART DIRECTION:
+ *   Uses indigo color scheme (distinct from the earthy tones used elsewhere)
+ *   to visually differentiate institutional content from peer-to-peer interactions.
+ *   Fallback images use getFallbackImage(item.category) from artDirection.ts.
+ * 
+ * CALLED BY: Explore.tsx (ORGANIZATIONS view mode)
+ */
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { query, collection, where, getDocs, addDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';

@@ -1,3 +1,39 @@
+/**
+ * FILE: ChatRoom.tsx
+ * ROLE IN KULA: The "Conversation Engine" — renders and manages a real-time chat.
+ * 
+ * CIRCUIT D (Conversation Loop):
+ *   This is the CORE communication component. It handles:
+ *     1. DIRECT CHATS: 1-on-1 between two users (about an item or general)
+ *     2. CHANNEL CHATS: Group messages within a Circle (many-to-many)
+ *     3. THREADS: Nested replies under a specific message (Slack-like)
+ * 
+ * DATA ARCHITECTURE (Firestore):
+ *   chats/{chatId}                 → Chat metadata (participants, lastMessage, unreadBy)
+ *   chats/{chatId}/messages/{id}   → Individual messages (text, polls, urgent, system)
+ *   chats/{chatId}/messages/{id}/replies/{replyId} → Thread replies
+ * 
+ * MESSAGE TYPES:
+ *   - TEXT: Normal messages with optional reply-to context
+ *   - POLL: Community decision-making ("İmece Decision") with votable options
+ *   - URGENT: SOS-style emergency needs (#UrgentNeeds channel) that can be CLAIMED
+ *   - SYSTEM: Automated messages (handover confirmations, status changes)
+ * 
+ * KEY BEHAVIORS:
+ *   - Auto-scroll: scrollRef keeps view at bottom when new messages arrive
+ *   - Mark-as-read: Opening a chat clears your UID from `unreadBy` array
+ *   - Confirm Handover: Item owner can mark exchange as COMPLETED, triggering GratitudeFlow
+ *   - Quick Messages: Pre-written neighborly phrases for fast engagement
+ * 
+ * AI TRANSLATION:
+ *   Each message has a translate button (Languages icon) that calls geminiService.ts.
+ *   It uses the user's preferredLanguage from their profile to translate.
+ *   Translated text toggles between original and translated views.
+ * 
+ * CALLED BY: ChatsList.tsx (selected chat), Circles.tsx (circle channels)
+ * WRITES TO: chats/{chatId}/messages, chats/{chatId} (lastMessage, unreadBy)
+ * READS FROM: chats/{chatId}, users/{otherUserId}, items/{itemId}
+ */
 import React, { useState, useEffect, useRef } from 'react';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, doc, updateDoc, getDoc, arrayUnion, arrayRemove } from 'firebase/firestore';

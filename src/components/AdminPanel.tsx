@@ -1,3 +1,26 @@
+/**
+ * FILE: AdminPanel.tsx
+ * ROLE IN KULA: The "Moderation Console" — content management for admins.
+ * 
+ * ACCESS CONTROL:
+ *   Only visible when UserProfile.isAdmin is true. Navigation.tsx conditionally
+ *   adds the admin tab, and App.tsx renders this component for the 'admin' tab.
+ *   Firestore security (firestore.rules → isAdmin()) enforces server-side.
+ * 
+ * FEATURES:
+ *   1. Content Moderation: Lists the 50 most recent items. Admins can:
+ *      - Toggle "Featured" status (boosts visibility in the feed)
+ *      - Delete items (removes harmful/spam content)
+ *   2. Community Activity: Shows total user count from live Firestore data.
+ * 
+ * LIVE DATA:
+ *   Both items and users use onSnapshot for real-time updates.
+ *   If another admin deletes an item, it disappears from your panel instantly.
+ * 
+ * CONNECTION TO firestore.rules:
+ *   deleteDoc(doc(db, 'items', id)) — allowed by: isAdmin() check in rules
+ *   updateDoc(doc(db, 'items', id), { isFeatured }) — allowed by: isSignedIn() (open update)
+ */
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { collection, query, limit, onSnapshot, orderBy, doc, deleteDoc, updateDoc } from 'firebase/firestore';

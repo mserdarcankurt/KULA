@@ -1,3 +1,30 @@
+/**
+ * FILE: GratitudeFlow.tsx
+ * ROLE IN KULA: The "Thank You Ritual" — the ceremony that closes a gift exchange.
+ * 
+ * CIRCUIT: This is the BRIDGE between the Item lifecycle and the Trust Engine.
+ *   When an exchange is completed (ASK fulfilled, SHARE received), this component
+ *   opens as a bottom sheet. The user writes a personal thank-you note and selects
+ *   a "vibe" emoji. On submit:
+ * 
+ *   1. GRATITUDE NOTE is created in Firestore → `gratitude_notes/{id}`
+ *      This appears on the recipient's profile in TrustMosaic.tsx ("Gratitude Wall")
+ * 
+ *   2. TRUST MOSAIC is incremented for BOTH users:
+ *      trustMosaic.completedExchanges += 1 (uses Firestore `increment()`)
+ *      This affects the GrowthStage calculation in TrustMosaic.tsx:
+ *        SEEDLING (0) → SPROUT (1-4) → TREE (5-14) → OLD_GROWTH (15+) → ELDER (30+)
+ * 
+ *   3. CALLBACK fires: onComplete() tells ItemDetailsSheet.tsx to update the item status.
+ * 
+ * DESIGN INTENT:
+ *   This component is intentionally ceremonial — the vibe emoji selector, the
+ *   minimum 10-character requirement, the animated success heart — all designed
+ *   to make "saying thank you" feel meaningful, not transactional.
+ *   This is the anti-Amazon review: personal, warm, community-focused.
+ * 
+ * CALLED BY: ItemDetailsSheet.tsx (when item status transitions to COMPLETED)
+ */
 import React, { useState } from 'react';
 import { X, Send, Heart } from 'lucide-react';
 import { db } from '../lib/firebase';

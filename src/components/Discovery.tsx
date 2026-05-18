@@ -1,3 +1,44 @@
+/**
+ * FILE: Discovery.tsx
+ * ROLE IN KULA: The "Tinder for Neighbors" — a swipeable card interface for items.
+ * 
+ * CIRCUIT B (Neighborhood Pulse):
+ *   This is the PRIMARY content consumption component. It fetches items from
+ *   useItems.ts and presents them as swipeable cards.
+ * 
+ * SWIPE MECHANICS:
+ *   - SWIPE RIGHT (or ❤️ button): "I'm interested"
+ *     → Creates a swipe record, sends a notification to the item owner,
+ *     → Creates or finds a chat via chatService.getOrCreateChat()
+ *     → Navigates to the chat via onNavigateToChat callback
+ *   - SWIPE LEFT (or ✕ button): "Not interested"
+ *     → Records a PASS swipe (prevents showing the item again)
+ *   - SWIPE UP (or 💬 button): "View details"
+ *     → Opens ItemDetailsSheet.tsx with full item info and comments
+ * 
+ * CIRCLE_INVITE CARDS:
+ *   Public circles the user hasn't joined appear as special JOIN cards.
+ *   Swiping right on these joins the circle (adds to members subcollection,
+ *   updates user's joinedCircles array, increments memberCount).
+ * 
+ * INTERLEAVING ALGORITHM (useMemo):
+ *   Items are grouped by type (ASK, SHARE, JOIN, etc.) then interleaved
+ *   to prevent monotony — max 2 of the same type in a row. Within each type,
+ *   items are sorted by distance (closest first).
+ * 
+ * FILTERS:
+ *   - Local/Global toggle: limits items by distance radius
+ *   - Scope: ALL / VICINITY / CIRCLES / ORGS
+ *   - Type: ALL / ASK / SHARE / JOIN / IMECE / MISSION
+ *   Persisted in localStorage for session continuity.
+ * 
+ * SUB-COMPONENTS:
+ *   - SwipeCard: The draggable card with Framer Motion physics
+ *   - BridgeSheet: Share items with circles or connections
+ *   - MapView: Alternative map view of the same filtered items
+ * 
+ * CALLED BY: Explore.tsx (DISCOVERY view mode)
+ */
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'motion/react';
 import { X, Heart, MapPin, Tag, Map as MapIcon, Layers, Globe, Users, Clock, Shield, Languages, Loader2, Zap, Send, Share2, Copy, MessageCircle } from 'lucide-react';
@@ -22,9 +63,10 @@ interface DiscoveryProps {
   location: { lat: number; lng: number } | null;
   circleId?: string;
   onNavigateToChat?: (chatId: string) => void;
+  onNavigateToCircle?: (circleId: string) => void;
 }
 
-export default function Discovery({ location, circleId, onNavigateToChat }: DiscoveryProps) {
+export default function Discovery({ location, circleId, onNavigateToChat, onNavigateToCircle }: DiscoveryProps) {
   const { user, profile } = useAuth();
   const { items, loading } = useItems(location, profile, circleId);
   const [localSwipedIds, setLocalSwipedIds] = useState<Set<string>>(new Set());
@@ -41,7 +83,7 @@ export default function Discovery({ location, circleId, onNavigateToChat }: Disc
   const [scope, setScope] = useState<'ALL' | 'VICINITY' | 'CIRCLES' | 'ORGS'>(() => {
     return (localStorage.getItem('kula_discovery_scope') as any) || DISCOVERY_DEFAULTS.scope;
   });
-  const [typeFilter, setTypeFilter] = useState<'ALL' | 'ASK' | 'SHARE' | 'IMECE' | 'MISSION' | 'JOIN'>(() => {
+  const [typeFilter, setTypeFilter] = useState<'ALL' | 'ASK' | 'SHARE' | 'IMECE' | 'MISSION' | 'JOIN' | 'CIRCLE_INVITE'>(() => {
     return (localStorage.getItem('kula_discovery_type_filter') as any) || DISCOVERY_DEFAULTS.typeFilter;
   });
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
@@ -107,31 +149,183 @@ export default function Discovery({ location, circleId, onNavigateToChat }: Disc
     return unsubscribe;
   }, [user]);
 
-  const activeItems = [...items, ...circleItems].filter(item => {
-    if (item.ownerId === user?.uid) return false;
-    if (swipedIds.has(item.id) || localSwipedIds.has(item.id)) return false;
-    
-    // For CIRCLE_INVITE, bypass local radius filter as they are global or logic is different
-    if (item.type !== 'CIRCLE_INVITE') {
-      // Local/Global Filter
-      if (isLocalOnly && item.distance !== undefined && item.distance > localRadius) return false;
+  // Type-aware interleaving logic to prevent too many of the same "card type" in a row
+  const activeItems = React.useMemo(() => {
+    const rawItems = [...items, ...circleItems].filter(item => {
+      if (item.ownerId === user?.uid) return false;
+      if (swipedIds.has(item.id) || localSwipedIds.has(item.id)) return false;
       
-      // Scope Filter
-      if (scope === 'VICINITY' && !item.reachTypes?.includes('VICINITY')) return false;
-      if (scope === 'CIRCLES' && !(item.reachTypes?.includes('ALL_CIRCLES') || item.reachTypes?.includes('SPECIFIC_CIRCLES'))) return false;
-      if (scope === 'ORGS' && !item.ownerIsOrganization) return false;
+      // For CIRCLE_INVITE, bypass local radius filter as they are global or logic is different
+      if (item.type !== 'CIRCLE_INVITE') {
+        // Local/Global Filter
+        const isLocalhost = window.location.hostname === 'localhost';
+        if (isLocalOnly && !isLocalhost && item.distance !== undefined && item.distance !== Infinity && item.distance > localRadius) return false;
+        
+        // Scope Filter
+        if (scope === 'VICINITY' && !item.reachTypes?.includes('VICINITY')) return false;
+        if (scope === 'CIRCLES' && !(item.reachTypes?.includes('ALL_CIRCLES') || item.reachTypes?.includes('SPECIFIC_CIRCLES'))) return false;
+        if (scope === 'ORGS' && !item.ownerIsOrganization) return false;
+      }
+
+      // Type Filter
+      if (typeFilter !== 'ALL' && item.type !== typeFilter) return false;
+      
+      return true;
+    });
+
+    // If a specific filter is set, just return standard distance-based/chronological sorting
+    if (typeFilter !== 'ALL') {
+      const groups: Record<string, Item[]> = {};
+      rawItems.forEach(item => {
+        const type = item.type || 'UNKNOWN';
+        if (!groups[type]) groups[type] = [];
+        groups[type].push(item);
+      });
+
+      Object.values(groups).forEach(group => {
+        group.sort((a, b) => (a.distance || 0) - (b.distance || 0));
+      });
+
+      const interleaved: Item[] = [];
+      const totalToFetch = rawItems.length;
+
+      while (interleaved.length < totalToFetch) {
+        const availableTypes = Object.keys(groups).filter(t => groups[t].length > 0);
+        if (availableTypes.length === 0) break;
+
+        let selectedType = availableTypes[0];
+        let minDist = groups[selectedType][0].distance ?? 999999;
+        
+        for (let i = 1; i < availableTypes.length; i++) {
+          const t = availableTypes[i];
+          const d = groups[t][0].distance ?? 999999;
+          if (d < minDist) {
+            minDist = d;
+            selectedType = t;
+          }
+        }
+
+        const item = groups[selectedType].shift()!;
+        interleaved.push(item);
+      }
+      return interleaved;
     }
 
-    // Type Filter
-    if (typeFilter !== 'ALL' && item.type !== typeFilter) return false;
-    
-    return true;
-  }).sort((a, b) => {
-    // Basic mix: mostly sort by distance (where available), but mix circles in
-    if (a.type === 'CIRCLE_INVITE' && b.type !== 'CIRCLE_INVITE') return -1;
-    if (a.type !== 'CIRCLE_INVITE' && b.type === 'CIRCLE_INVITE') return 1;
-    return (a.distance || 0) - (b.distance || 0);
-  });
+    // For 'ALL', separate CIRCLE_INVITE items from normal posts to prevent distance-0 dominance
+    const circleInvites = rawItems.filter(item => item.type === 'CIRCLE_INVITE');
+    const otherItems = rawItems.filter(item => item.type !== 'CIRCLE_INVITE');
+
+    // Interleave all other items normally
+    const groups: Record<string, Item[]> = {};
+    otherItems.forEach(item => {
+      const type = item.type || 'UNKNOWN';
+      if (!groups[type]) groups[type] = [];
+      groups[type].push(item);
+    });
+
+    Object.values(groups).forEach(group => {
+      group.sort((a, b) => (a.distance || 0) - (b.distance || 0));
+    });
+
+    const otherInterleaved: Item[] = [];
+    const currentStreak = { type: '', count: 0 };
+    const maxInARow = 2;
+    const totalToFetchOther = otherItems.length;
+
+    while (otherInterleaved.length < totalToFetchOther) {
+      const availableTypes = Object.keys(groups).filter(t => groups[t].length > 0);
+      if (availableTypes.length === 0) break;
+
+      let selectedType = '';
+
+      if (currentStreak.count >= maxInARow && availableTypes.length > 1) {
+        const otherTypes = availableTypes.filter(t => t !== currentStreak.type);
+        selectedType = otherTypes[0];
+        let minOtherDist = groups[selectedType][0].distance ?? 999999;
+        
+        for (let i = 1; i < otherTypes.length; i++) {
+          const t = otherTypes[i];
+          const d = groups[t][0].distance ?? 999999;
+          if (d < minOtherDist) {
+            minOtherDist = d;
+            selectedType = t;
+          }
+        }
+      } else {
+        selectedType = availableTypes[0];
+        let minDist = groups[selectedType][0].distance ?? 999999;
+        
+        for (let i = 1; i < availableTypes.length; i++) {
+          const t = availableTypes[i];
+          const d = groups[t][0].distance ?? 999999;
+          if (d < minDist) {
+            minDist = d;
+            selectedType = t;
+          }
+        }
+      }
+
+      const item = groups[selectedType].shift()!;
+      otherInterleaved.push(item);
+
+      const itemType = String(item.type || 'UNKNOWN');
+      if (itemType === currentStreak.type) {
+        currentStreak.count++;
+      } else {
+        currentStreak.type = itemType;
+        currentStreak.count = 1;
+      }
+    }
+
+    // Merge CIRCLE_INVITE cards into the normal card deck.
+    // Strategy: calculate proportional positions, but CAP the maximum gap so
+    // a circle invite always appears within MAX_GAP normal cards of the previous one.
+    //
+    // With 220 normals and 3 circles, pure proportionality → first circle at card ~73.
+    // With MAX_GAP=5 → circle invites appear at cards 5, 11, 17, then all normals after.
+    //
+    // MAX_GAP = the most normal cards the user can swipe before a circle invite must appear.
+    const MAX_GAP = 5;
+
+    if (circleInvites.length === 0) {
+      return otherInterleaved;
+    }
+    if (otherInterleaved.length === 0) {
+      return circleInvites;
+    }
+
+    // Pre-calculate capped insertion positions.
+    // Each position is the minimum of the proportional position and the gap-capped position.
+    const totalFinal = otherInterleaved.length + circleInvites.length;
+    const stride = totalFinal / circleInvites.length;
+
+    const circleInsertPositions = new Set<number>();
+    let lastInsertedAt = -1;
+    for (let i = 0; i < circleInvites.length; i++) {
+      const proportionalPos = Math.round(stride * i + stride / 2) - 1;
+      const gapCappedPos = lastInsertedAt + MAX_GAP + 1;
+      const actualPos = Math.min(proportionalPos, gapCappedPos);
+      circleInsertPositions.add(actualPos);
+      lastInsertedAt = actualPos;
+    }
+
+    // Build the final array in a single pass.
+    const finalInterleaved: Item[] = [];
+    let otherIdx = 0;
+    let circleIdx = 0;
+
+    for (let pos = 0; pos < totalFinal; pos++) {
+      if (circleInsertPositions.has(pos) && circleIdx < circleInvites.length) {
+        finalInterleaved.push(circleInvites[circleIdx++]);
+      } else if (otherIdx < otherInterleaved.length) {
+        finalInterleaved.push(otherInterleaved[otherIdx++]);
+      } else {
+        finalInterleaved.push(circleInvites[circleIdx++]);
+      }
+    }
+
+    return finalInterleaved;
+  }, [items, circleItems, user?.uid, swipedIds, localSwipedIds, isLocalOnly, localRadius, scope, typeFilter]);
 
   const currentItem = activeItems[0];
 
@@ -167,6 +361,11 @@ export default function Discovery({ location, circleId, onNavigateToChat }: Disc
             await updateDoc(circleRef, {
               memberCount: (circleSnap.data().memberCount || 0) + 1
             });
+          }
+
+          // Automatically open the circle space after joining
+          if (onNavigateToCircle) {
+            onNavigateToCircle(currentItem.id);
           }
         } catch (err: any) {
           console.error("Right swipe on circle failed with error:", err);
@@ -353,7 +552,7 @@ export default function Discovery({ location, circleId, onNavigateToChat }: Disc
                   <div className="space-y-2">
                     <span className="text-[9px] font-black uppercase tracking-widest text-stone-400 px-1">Interaction Type</span>
                     <div className="flex gap-1 overflow-x-auto pb-1 no-scrollbar">
-                      {(['ALL', 'SHARE', 'ASK', 'JOIN', 'IMECE', 'MISSION'] as const).map((t) => (
+                      {(['ALL', 'SHARE', 'ASK', 'JOIN', 'IMECE', 'MISSION', 'CIRCLE_INVITE'] as const).map((t) => (
                         <button
                           key={t}
                           onClick={() => setTypeFilter(t)}
@@ -363,7 +562,7 @@ export default function Discovery({ location, circleId, onNavigateToChat }: Disc
                               : 'bg-white border-stone-100 text-stone-400 hover:border-stone-200'
                           }`}
                         >
-                          {t === 'ALL' ? 'All' : t === 'SHARE' ? 'Gives' : t === 'ASK' ? 'Asks' : t === 'JOIN' ? 'Joins' : t === 'IMECE' ? 'İmece' : 'Missions'}
+                          {t === 'ALL' ? 'All' : t === 'SHARE' ? 'Gives' : t === 'ASK' ? 'Asks' : t === 'JOIN' ? 'Joins' : t === 'IMECE' ? 'İmece' : t === 'MISSION' ? 'Missions' : 'Circles'}
                         </button>
                       ))}
                     </div>
@@ -611,7 +810,14 @@ export function SwipeCard({ item, onSwipe, onViewProfile, isLocalOnly }: SwipeCa
                 >
                   <Users size={10} className="group-hover/name:scale-110 transition-transform" />
                   <span className="group-hover/name:underline decoration-2 underline-offset-4">
-                    <OwnerName ownerId={item.ownerId} initialName={item.ownerName} />
+                    <OwnerName 
+                      ownerId={item.ownerId} 
+                      initialName={item.ownerName} 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onViewProfile?.(item.ownerId);
+                      }}
+                    />
                   </span>
                 </button>
               )}

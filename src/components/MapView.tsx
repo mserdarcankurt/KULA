@@ -1,3 +1,30 @@
+/**
+ * FILE: MapView.tsx
+ * ROLE IN KULA: The "Neighborhood Radar" — plots community items on a Google Map.
+ * 
+ * CIRCUIT B (Neighborhood Pulse):
+ *   This is the VISUAL OUTPUT of the geo-query pipeline:
+ *     useGeolocation.ts (GPS) → useItems.ts (query + filter) → Discovery.tsx → this component
+ *   It receives pre-filtered items from its parent and plots them as colored pins.
+ * 
+ * PIN COLORS:
+ *   - Green (#10b981, emerald): SHARE items ("I have something to give")
+ *   - Amber (#f59e0b): ASK items ("I need something")
+ *   This creates an instant visual language: green = abundance, amber = need.
+ * 
+ * GOOGLE MAPS API:
+ *   Uses @vis.gl/react-google-maps for the Advanced Markers API.
+ *   The API key is read from VITE_GOOGLE_MAPS_PLATFORM_KEY env variable.
+ *   If the key is missing, we show a friendly fallback message instead of crashing.
+ * 
+ * INFO WINDOWS:
+ *   Clicking a pin opens a popup with the item's type, title, time, and description.
+ *   Clicking "View Detail" in the popup calls onItemClick() → opens ItemDetailsSheet.tsx.
+ * 
+ * GRACEFUL DEGRADATION:
+ *   If no API key is configured, the component renders a dashed-border placeholder
+ *   with instructions. The app still works — users just can't see the map view.
+ */
 import React, { useState, useEffect } from 'react';
 import { APIProvider, Map, AdvancedMarker, Pin, InfoWindow, useAdvancedMarkerRef } from '@vis.gl/react-google-maps';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';

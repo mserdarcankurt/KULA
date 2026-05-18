@@ -1,3 +1,44 @@
+/**
+ * FILE: PostItem.tsx
+ * ROLE IN KULA: The "Content Creator" — form for posting items to the community.
+ * 
+ * CIRCUIT B (Neighborhood Pulse):
+ *   This component WRITES to the `items` collection in Firestore.
+ *   Items created here flow into:
+ *     - Discovery.tsx (swipe cards)
+ *     - Feed.tsx (list view)
+ *     - MapView.tsx (map pins, if location is shared)
+ * 
+ * ITEM TYPES:
+ *   - SHARE ("Giving"): "I have something to offer" — tools, food, skills
+ *   - ASK ("Asking"): "I need something" — requests for help or items
+ *   - JOIN ("Gathering"): Casual meetups and events
+ *   - IMECE: Collaborative tasks needing many hands (with participant counter)
+ *   - MISSION: Organization-only tasks for volunteers (gated by isOrganization)
+ * 
+ * REACH SYSTEM ("Scope of Resonance"):
+ *   Users choose WHO can see their post:
+ *   - VICINITY: All neighbors within distance
+ *   - SPECIFIC_CIRCLES: Only members of selected circles
+ *   - Both: Neighborhood + specific circles
+ *   Default reach comes from UserProfile.defaultReach (set in Profile.tsx settings).
+ * 
+ * MEDIA:
+ *   Images and videos are captured via camera/gallery and stored as data URLs.
+ *   FileReader.readAsDataURL() converts files to base64 strings stored in Firestore.
+ *   NOTE: For production, this should migrate to Cloud Storage with proper URLs.
+ * 
+ * LOCATION:
+ *   The "Pin to Map" toggle controls whether GPS coordinates are saved.
+ *   If VICINITY is in reachTypes, location is MANDATORY (the toggle is locked on).
+ *   Location comes from useGeolocation.ts via the `location` prop.
+ * 
+ * POST TOUR (Joyride):
+ *   First-time posters get an interactive tour explaining each item type.
+ *   Controlled by hasCompletedPostTour in the user profile.
+ * 
+ * CALLED BY: App.tsx (the 'post' tab), Circles.tsx (post within circle)
+ */
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { collection, addDoc, serverTimestamp, query, getDocs, where, getDoc, doc } from 'firebase/firestore';
@@ -200,6 +241,8 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
     }
   };
 
+  // --- VISIBLE UI STARTS HERE ---
+  // The code below draws the form layout: the tour guide, the title, and all the input fields.
   return (
     <div className="h-full flex flex-col pt-4 px-6 relative overflow-y-auto no-scrollbar">
       <Joyride

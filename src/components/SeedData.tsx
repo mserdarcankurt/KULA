@@ -1,3 +1,30 @@
+/**
+ * FILE: SeedData.tsx
+ * ROLE IN KULA: The "Test Data Generator" — populates the database with fake neighbors.
+ * 
+ * PURPOSE:
+ *   During development, you need a populated database to test features like
+ *   the trust graph, feed, and distance sorting. This component calls a
+ *   backend API endpoint (/api/seed) that creates realistic test users,
+ *   items, circles, and vouches.
+ * 
+ * SECURITY:
+ *   The API call includes a Firebase Auth ID token (user.getIdToken()).
+ *   The backend verifies this token and checks that the caller is an admin
+ *   before seeding. This prevents unauthorized data manipulation.
+ * 
+ * LOCATION-AWARE:
+ *   Seeded items are scattered around the user's current GPS location
+ *   (from useGeolocation.ts) or the profile's saved location.
+ *   Default fallback: Berlin center (52.5200, 13.4050).
+ * 
+ * ERROR HANDLING:
+ *   - Quota exceeded: Firestore free tier limits — warns and stops
+ *   - Timeout: 2-minute safety cap with informative message
+ *   - On success: auto-refreshes the page to show new data
+ * 
+ * USED BY: Profile.tsx (admin section, dev tools)
+ */
 import React, { useState } from 'react';
 import { db } from '../lib/firebase';
 import { collection, serverTimestamp, writeBatch, doc, getDocs, query, where, deleteDoc, setDoc } from 'firebase/firestore';
@@ -58,18 +85,22 @@ export default function SeedData({ onComplete }: { onComplete?: () => void }) {
     setLoading(true);
     console.log("Starting seed process...");
 
-    // Timeout fallback to ensure we don't spin forever
+    // Timeout fallback — generous limit for large seed operations
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("Operation timed out after 30 seconds.")), 30000)
+      setTimeout(() => reject(new Error("Operation timed out after 2 minutes. The seed may still be running — try refreshing.")), 120000)
     );
 
     const runSeed = async () => {
       setStatusMessage({ text: "Step 1: Contacting secure backend seeder...", type: 'success' });
       
+      // Get the fresh ID token from Firebase Auth
+      const token = await user.getIdToken();
+
       const response = await fetch('/api/seed', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
           userId: user.uid,
@@ -92,7 +123,12 @@ export default function SeedData({ onComplete }: { onComplete?: () => void }) {
     try {
       await Promise.race([runSeed(), timeoutPromise]);
       console.log("Successfully seeded rich test data via backend.");
-      setStatusMessage({ text: "Successfully seeded test data securely!", type: 'success' });
+      setStatusMessage({ text: "Successfully seeded! Refreshing to show new neighbors...", type: 'success' });
+      
+      setTimeout(() => {
+        window.location.reload();
+      }, 1500);
+
       if (onComplete) {
         setTimeout(onComplete, 1000);
       }

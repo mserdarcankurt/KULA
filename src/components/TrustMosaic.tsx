@@ -1,3 +1,31 @@
+/**
+ * FILE: TrustMosaic.tsx
+ * ROLE IN KULA: The "Community Passport" — a visual dashboard of a user's participation.
+ * 
+ * CIRCUIT: This is the READ SIDE of the Trust Engine.
+ *   GratitudeFlow.tsx WRITES to trustMosaic (increments counters).
+ *   This component READS those counters and renders them as a visual dashboard.
+ * 
+ * GROWTH STAGE ALGORITHM:
+ *   getGrowthStage() maps raw numbers to metaphorical labels:
+ *     - SEEDLING: 0 completed exchanges (just joined)
+ *     - SPROUT: 1-4 exchanges (getting started)
+ *     - TREE: 5-14 exchanges + 1 İmece participation (active contributor)
+ *     - OLD_GROWTH: 15+ exchanges + 3 İmece + 2 vouches (community pillar)
+ *     - ELDER: 30+ exchanges + 5 İmece (long-standing leader)
+ *   Each stage has a color, icon, and description that maps to the Berlin Analog aesthetic.
+ * 
+ * SECTIONS:
+ *   1. Growth Stage Banner — the metaphorical title (Seedling → Elder)
+ *   2. Stats Bento Grid — 3 tiles showing Exchanges, İmece, and Circle counts
+ *   3. Member Since — timestamp from UserProfile.createdAt
+ *   4. Gratitude Wall — live feed of thank-you notes from other users
+ *      (Subscribes to `gratitude_notes WHERE toUserId == this user`, ordered by recency)
+ * 
+ * USED BY:
+ *   - Profile.tsx — shows YOUR trust mosaic on your own profile
+ *   - PublicProfile.tsx — shows SOMEONE ELSE's trust mosaic (compact mode)
+ */
 import React, { useState, useEffect } from 'react';
 import { TrustMosaic as TrustMosaicType, GratitudeNote, GrowthStage } from '../types';
 import { db } from '../lib/firebase';

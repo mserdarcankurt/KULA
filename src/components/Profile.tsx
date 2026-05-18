@@ -1,35 +1,57 @@
+/**
+ * FILE: Profile.tsx
+ * ROLE IN KULA: The "Personal Dashboard" — the user's own profile, settings, and items.
+ * 
+ * THIS IS THE MOST COMPLEX COMPONENT. It contains:
+ * 
+ * 1. IDENTITY SECTION:
+ *    - Avatar, name, invite code (for sharing with new users)
+ *    - TrustMosaic component (growth stage visualization)
+ *    - Instagram link-in-bio integration
+ * 
+ * 2. MY ITEMS (live queries):
+ *    - Items I posted (filtered by type: SHARE/ASK/JOIN/IMECE/MISSION)
+ *    - İmece I joined (items where my UID is in participants array)
+ *    - Each item can be deleted (status → DELETED via updateDoc)
+ * 
+ * 3. HOST SYSTEM (Lineage):
+ *    - Shows who invited me (hostProfile)
+ *    - Shows who I invited (myGuests — queried by hostId == my UID)
+ *    - Can approve pending guests (sets hostStatus → APPROVED)
+ *    - Can change host via invite code lookup
+ * 
+ * 4. VOUCH SYSTEM:
+ *    - Shows pending vouch requests (received)
+ *    - Can accept or decline vouches
+ *    - Accepted vouches create edges in the trust graph (trustGraph.ts)
+ * 
+ * 5. SETTINGS MODAL (showSettings):
+ *    - Public Name editing
+ *    - Instagram handle
+ *    - Programmable Radar (lookout/standby rules)
+ *    - Language preference (for AI translation target)
+ *    - Default Reach (VICINITY vs SPECIFIC_CIRCLES)
+ *    - Network Privacy (PUBLIC → DEGREE_1, controls visibility via trustGraph.ts)
+ *    - Organization toggle (switches profile type)
+ *    - Seed Data button (dev tools)
+ *    - Restart Tour button
+ *    - Guardian Dashboard link (dev mode)
+ * 
+ * ALL STATE MUTATIONS: Every setting change calls updateDoc on users/{uid}
+ * directly. useAuth.tsx's onSnapshot listener picks up changes instantly.
+ * 
+ * CALLED BY: App.tsx (the 'profile' tab)
+ */
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { LogOut, Star, Award, MapPin, Heart, Settings, Tag, Clock, CheckCircle2, Globe, Shield, Target, Sparkles, Languages, X, Users, Instagram } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { collection, query, where, onSnapshot, orderBy, writeBatch, serverTimestamp, doc, updateDoc, getDocs, getDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, writeBatch, serverTimestamp, doc, updateDoc, getDocs, getDoc, addDoc, deleteDoc } from 'firebase/firestore';
+import PublicProfile from './PublicProfile';
 import { Item } from '../types';
 import SeedData from './SeedData';
 import TrustMosaicComponent from './TrustMosaic';
-
-const userNames = [
-  "Alice Chen", "Bob Miller", "Chloe Smith", "David Park", "Elena Rodriguez",
-  "Frank Wilson", "Grace Lee", "Henry Taylor", "Isabella White", "Jack Thompson"
-];
-
-const sharedItems = ["Hammer", "Lawn Mower", "Drill", "Ladder", "Pressure Washer", "Stand Mixer", "Camping Tent"];
-const needsResources = ["Sugar for baking", "Help moving a sofa", "recommendation for a plumber", "Plant watering"];
-const bios = ["Art teacher who loves gardening.", "Software engineer with tools.", "Retiree who enjoys baking."];
-
-const berlinLocations = [
-  { lat: 52.5316, lng: 13.3817 }, // Mitte
-  { lat: 52.5158, lng: 13.4540 }, // Friedrichshain-Kreuzberg
-  { lat: 52.5669, lng: 13.4244 }, // Pankow
-  { lat: 52.4988, lng: 13.2843 }, // Charlottenburg-Wilmersdorf
-  { lat: 52.5348, lng: 13.1975 }, // Spandau
-  { lat: 52.4292, lng: 13.2289 }, // Steglitz-Zehlendorf
-  { lat: 52.4844, lng: 13.3444 }, // Tempelhof-Schöneberg
-  { lat: 52.4811, lng: 13.4350 }, // Neukölln
-  { lat: 52.4418, lng: 13.5786 }, // Treptow-Köpenick
-  { lat: 52.5398, lng: 13.5606 }, // Marzahn-Hellersdorf
-  { lat: 52.5152, lng: 13.4975 }, // Lichtenberg
-  { lat: 52.5857, lng: 13.3276 }  // Reinickendorf
-];
+import { getFallbackImage } from '../lib/artDirection';
 
 interface ItemRowProps {
   item: Item;
@@ -48,11 +70,7 @@ function ItemRow({ item, isParticipation }: ItemRowProps) {
         {item.images?.[0] ? (
           <img referrerPolicy="no-referrer" src={item.images[0]} alt={item.title} className="w-full h-full object-cover" />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-stone-200">
-            {item.type === 'IMECE' ? <Heart size={20} className="text-amber-300" /> : 
-             item.type === 'MISSION' ? <Shield size={20} className="text-indigo-300" /> : 
-             item.type === 'JOIN' ? <Users size={20} className="text-teal-300" /> : <Tag size={20} />}
-          </div>
+          <img src={getFallbackImage(item.category)} alt={item.category || item.type} className="w-full h-full object-cover opacity-80" />
         )}
       </div>
       <div className="flex-1 min-w-0">
@@ -78,6 +96,20 @@ function ItemRow({ item, isParticipation }: ItemRowProps) {
           )}
         </div>
       </div>
+      {!isParticipation && item.status !== 'COMPLETED' && (
+        <button 
+          onClick={async (e) => {
+            e.stopPropagation();
+            if (window.confirm("Remove this item?")) {
+              await updateDoc(doc(db, 'items', item.id), { status: 'DELETED' });
+            }
+          }}
+          className="p-2 text-stone-300 hover:text-red-500 transition-colors"
+          title="Delete Item"
+        >
+          <X size={16} />
+        </button>
+      )}
       <div className={`${isParticipation || item.status === 'COMPLETED' ? 'text-green-500' : 'text-stone-300'} group-hover:text-[--color-brand] transition-colors`}>
         <CheckCircle2 size={20} />
       </div>
@@ -86,12 +118,14 @@ function ItemRow({ item, isParticipation }: ItemRowProps) {
 }
 export default function Profile({ 
   onRestartOnboarding,
-  onSeedComplete 
+  onSeedComplete,
+  onNavigateToGuardian
 }: { 
   onRestartOnboarding?: () => void,
-  onSeedComplete?: () => void
+  onSeedComplete?: () => void,
+  onNavigateToGuardian?: () => void
 }) {
-  const { user, profile, logout } = useAuth();
+  const { user, profile, logout, isGuardian } = useAuth();
   const [items, setItems] = useState<Item[]>([]);
   const [loadingItems, setLoadingItems] = useState(true);
   const [filter, setFilter] = useState<'SHARE' | 'ASK' | 'IMECE' | 'MISSION' | 'JOIN'>('SHARE');
@@ -101,6 +135,7 @@ export default function Profile({
   const [updatingReach, setUpdatingReach] = useState(false);
   const [updatingOrg, setUpdatingOrg] = useState(false);
   const [updatingLang, setUpdatingLang] = useState(false);
+  const [updatingVisibility, setUpdatingVisibility] = useState(false);
   const [updatingName, setUpdatingName] = useState(false);
   const [newName, setNewName] = useState(profile.displayName || '');
   const [updatingInstagram, setUpdatingInstagram] = useState(false);
@@ -117,6 +152,9 @@ export default function Profile({
   const [updatingHost, setUpdatingHost] = useState(false);
   const [hostError, setHostError] = useState('');
   const [hostSuccess, setHostSuccess] = useState('');
+  const [pendingVouches, setPendingVouches] = useState<any[]>([]);
+  const [acceptingVouchId, setAcceptingVouchId] = useState<string | null>(null);
+  const [selectedVouchProfile, setSelectedVouchProfile] = useState<string | null>(null);
 
   const updateProfileName = async () => {
     if (!user || !newName.trim()) return;
@@ -240,6 +278,20 @@ export default function Profile({
       console.error('Failed to update reach:', err);
     } finally {
       setUpdatingReach(false);
+    }
+  };
+
+  const updateVisibilityPreference = async (pref: any) => {
+    if (!user) return;
+    setUpdatingVisibility(true);
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        visibilityPreference: pref
+      });
+    } catch (err) {
+      console.error('Failed to update visibility:', err);
+    } finally {
+      setUpdatingVisibility(false);
     }
   };
 
@@ -415,10 +467,72 @@ export default function Profile({
     };
   }, [user]);
 
+  // Fetch pending vouch requests (received)
+  useEffect(() => {
+    if (!user) return;
+    const q = query(
+      collection(db, 'vouches'),
+      where('toUserId', '==', user.uid),
+      where('status', '==', 'PENDING')
+    );
+    const unsub = onSnapshot(q, async (snap) => {
+      const vouches: any[] = [];
+      for (const d of snap.docs) {
+        const data = d.data();
+        // Fetch the sender's profile
+        const senderSnap = await getDoc(doc(db, 'users', data.fromUserId));
+        const senderData = senderSnap.exists() ? senderSnap.data() : null;
+        vouches.push({
+          id: d.id,
+          ...data,
+          senderName: senderData?.displayName || 'A neighbor',
+          senderPhoto: senderData?.photoURL || null,
+        });
+      }
+      setPendingVouches(vouches);
+    });
+    return () => unsub();
+  }, [user]);
+
+  const handleAcceptVouch = async (vouchId: string, fromUserId: string) => {
+    if (acceptingVouchId) return;
+    setAcceptingVouchId(vouchId);
+    try {
+      await updateDoc(doc(db, 'vouches', vouchId), { status: 'ACCEPTED' });
+      // Notify sender
+      await addDoc(collection(db, 'notifications'), {
+        userId: fromUserId,
+        type: 'VOUCH_ACCEPTED',
+        content: `${profile.displayName} accepted your vouch! You are now connected neighbors.`,
+        isRead: false,
+        link: '',
+        createdAt: serverTimestamp()
+      });
+    } catch (err) {
+      console.error('Failed to accept vouch:', err);
+    } finally {
+      setAcceptingVouchId(null);
+    }
+  };
+
+  const handleDeclineVouch = async (vouchId: string) => {
+    if (acceptingVouchId) return;
+    setAcceptingVouchId(vouchId);
+    try {
+      await deleteDoc(doc(db, 'vouches', vouchId));
+    } catch (err) {
+      console.error('Failed to decline vouch:', err);
+    } finally {
+      setAcceptingVouchId(null);
+    }
+  };
+
   if (!profile) return null;
 
   const filteredItems = items.filter(item => item.type === filter);
 
+  // --- VISIBLE UI STARTS HERE ---
+  // The code below draws the profile layout: the avatar, settings gear, and the tabs for Posts/Activity.
   return (
     <div className="h-full flex flex-col bg-white overflow-y-auto">
       <div className="p-8 space-y-6">
@@ -626,6 +740,48 @@ export default function Profile({
                   </div>
                 </div>
 
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 text-stone-800">
+                    <Shield size={18} className="text-stone-400" />
+                    <h4 className="font-bold text-sm uppercase tracking-widest">Network Privacy</h4>
+                  </div>
+                  <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest leading-none">
+                    Who can see your profile and posts?
+                  </p>
+                  <div className="grid grid-cols-1 gap-2">
+                    {[
+                      { id: 'PUBLIC', title: 'Public (Anyone)', desc: 'Anyone on the app can see you' },
+                      { id: 'NETWORK', title: 'Network Only', desc: 'Anyone connected to you through the trust network' },
+                      { id: 'DEGREE_4', title: '4th Degree', desc: 'Friends of friends of friends of friends' },
+                      { id: 'DEGREE_3', title: '3rd Degree', desc: 'Friends of friends of friends' },
+                      { id: 'DEGREE_2', title: '2nd Degree', desc: 'Friends of friends' },
+                      { id: 'DEGREE_1', title: '1st Degree', desc: 'Only your direct connections' }
+                    ].map(option => (
+                      <button
+                        key={option.id}
+                        onClick={() => updateVisibilityPreference(option.id)}
+                        disabled={updatingVisibility}
+                        className={`p-4 rounded-2xl border-2 flex items-center gap-4 transition-all text-left ${
+                          (profile.visibilityPreference || 'PUBLIC') === option.id
+                            ? 'border-indigo-600 bg-indigo-600 text-white shadow-md'
+                            : 'border-stone-50 bg-stone-50 text-stone-500 hover:border-stone-200'
+                        }`}
+                      >
+                        <div className="flex flex-col">
+                          <span className="text-[10px] font-black uppercase tracking-widest leading-none mb-1">{option.title}</span>
+                          <span className={`text-[9px] font-medium leading-tight ${
+                            (profile.visibilityPreference || 'PUBLIC') === option.id
+                              ? 'text-white/80'
+                              : 'text-stone-400'
+                          }`}>
+                            {option.desc}
+                          </span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 <div className="pt-4 space-y-3">
                   <button 
                     onClick={() => {
@@ -659,6 +815,19 @@ export default function Profile({
                     <Sparkles size={16} />
                     Restart Welcome Tour
                   </button>
+
+                  {isGuardian && onNavigateToGuardian && (
+                    <button 
+                      onClick={() => {
+                        setShowSettings(false);
+                        onNavigateToGuardian();
+                      }}
+                      className="w-full py-4 border-2 border-emerald-100 bg-emerald-50 text-emerald-700 rounded-[1.5rem] font-bold text-[10px] uppercase tracking-[0.2em] flex items-center justify-center gap-2 mt-2"
+                    >
+                      <Shield size={16} />
+                      Guardian Dashboard
+                    </button>
+                  )}
 
                   <button 
                     onClick={() => setShowSettings(false)}
@@ -720,6 +889,68 @@ export default function Profile({
             Preview Public Page
           </button>
         </div>
+
+        {/* ── Pending Vouches Inbox ───────────────────── */}
+        {pendingVouches.length > 0 && (
+          <div className="bg-emerald-50 rounded-[2rem] p-6 border border-emerald-100/50 space-y-4">
+            <h4 className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-emerald-800">
+              <Sparkles size={16} /> Pending Vouches ({pendingVouches.length})
+            </h4>
+            <p className="text-[10px] text-emerald-600/70 font-medium">
+              These neighbors want to vouch for you. Accepting connects you in the trust network.
+            </p>
+            <div className="space-y-3">
+              {pendingVouches.map(v => (
+                <div key={v.id} className="bg-white rounded-2xl p-4 flex items-center gap-3 shadow-sm border border-emerald-100">
+                  <button
+                    onClick={() => setSelectedVouchProfile(v.fromUserId)}
+                    className="w-12 h-12 rounded-2xl bg-stone-100 overflow-hidden flex-shrink-0 hover:ring-2 hover:ring-emerald-300 transition-all"
+                  >
+                    {v.senderPhoto ? (
+                      <img src={v.senderPhoto} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-stone-400 font-bold text-lg">
+                        {v.senderName.charAt(0)}
+                      </div>
+                    )}
+                  </button>
+                  <div className="flex-1 min-w-0">
+                    <button
+                      onClick={() => setSelectedVouchProfile(v.fromUserId)}
+                      className="font-bold text-sm text-stone-900 hover:text-emerald-700 transition-colors truncate block text-left"
+                    >
+                      {v.senderName}
+                    </button>
+                    <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest">Wants to vouch for you</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleDeclineVouch(v.id)}
+                      disabled={acceptingVouchId === v.id}
+                      className="p-2 bg-stone-100 text-stone-400 rounded-xl hover:bg-red-50 hover:text-red-500 transition-all"
+                    >
+                      <X size={16} />
+                    </button>
+                    <button
+                      onClick={() => handleAcceptVouch(v.id, v.fromUserId)}
+                      disabled={acceptingVouchId === v.id}
+                      className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold text-[10px] uppercase tracking-widest hover:bg-emerald-700 transition-all disabled:opacity-50"
+                    >
+                      {acceptingVouchId === v.id ? '...' : 'Accept'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {selectedVouchProfile && (
+          <PublicProfile
+            userId={selectedVouchProfile}
+            onClose={() => setSelectedVouchProfile(null)}
+          />
+        )}
 
         {((profile.lookoutFor?.length || 0) > 0 || (profile.thePersonFor?.length || 0) > 0 || (profile.lookoutRules?.length || 0) > 0 || (profile.standbyRules?.length || 0) > 0) && (
           <div className="space-y-6 w-full text-left py-2">

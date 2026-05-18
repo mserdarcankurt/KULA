@@ -1,3 +1,46 @@
+/**
+ * FILE: Circles.tsx
+ * ROLE IN KULA: The "Micro-Communities Hub" — create, browse, and interact within Circles.
+ * 
+ * ARCHITECTURE:
+ *   Circles are the primary GROUP FORMATION mechanism in KULA. They serve as
+ *   intentional communities within the broader neighborhood network. Each circle
+ *   acts as a self-contained sub-app with its own Feed, Discovery, Chat, and Members.
+ * 
+ * DATA MODEL (Firestore):
+ *   circles/{circleId}                    → Circle metadata (name, privacy, memberCount)
+ *   circles/{circleId}/members/{userId}   → Membership records (joinedAt timestamp)
+ *   users/{userId}.joinedCircles          → Array of circle IDs (denormalized for fast lookups)
+ * 
+ * PRIVACY TIERS:
+ *   - PUBLIC: Visible to all, anyone can join
+ *   - PRIVATE: Visible in listings, requires invite code to join
+ *   - HIDDEN: Not listed at all; only accessible via direct circle ID/code
+ *     → When last member leaves, circle auto-transitions to HIDDEN (soft delete)
+ * 
+ * CIRCLE INTERIOR (selectedCircle):
+ *   When a circle is selected, the component renders a tabbed sub-app:
+ *   - FEED: Renders Feed.tsx filtered by circleId
+ *   - CHAT: Shows 4 channel rooms (#General, #Announcements, #DailyGratitude, #UrgentNeeds)
+ *     Each channel creates a CHANNEL-type chat doc with ID: circle_{id}_{channel}
+ *   - DISCOVERY: Renders Discovery.tsx (swipe mode) filtered by circleId
+ *   - POST: Renders PostItem.tsx with initialCircleId pre-filled
+ *   - MEMBERS: Lists all circle members with direct message buttons
+ * 
+ * JOIN METHODS:
+ *   1. Click "Join" on a PUBLIC circle card
+ *   2. Enter circle ID/code in the "Join by Code" form (for PRIVATE/HIDDEN)
+ *   3. Swipe right on a circle_invite card in Discovery.tsx
+ * 
+ * LEAVE FLOW:
+ *   Leaving a circle requires:
+ *   1. Unmount children FIRST (prevents snapshot permission errors)
+ *   2. Wait 100ms for React to unsubscribe listeners
+ *   3. Update memberCount (if 0 → set privacy to HIDDEN)
+ *   4. Delete membership doc + remove from joinedCircles array
+ * 
+ * CALLED BY: Explore.tsx (CIRCLES view mode)
+ */
 import React, { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, query, onSnapshot, orderBy, addDoc, serverTimestamp, doc, setDoc, deleteDoc, getDoc, updateDoc, arrayUnion, arrayRemove, where, getDocs } from 'firebase/firestore';
@@ -12,9 +55,122 @@ import ChatRoom from './ChatRoom';
 
 interface CirclesProps {
   onNavigateToChat?: (chatId: string) => void;
+  selectedCircleId?: string | null;
+  onClearSelection?: () => void;
 }
 
-export default function Circles({ onNavigateToChat }: CirclesProps = {}) {
+interface CircleCardProps {
+  circle: Circle;
+  profile: any;
+  onJoin: (id: string) => void;
+  onLeave: (e: any, id: string) => void;
+  onSelect: (circle: Circle) => void;
+}
+
+function CircleCard({ circle, profile, onJoin, onLeave, onSelect }: CircleCardProps) {
+  const isJoined = profile?.joinedCircles?.includes(circle.id);
+  
+  const handleDragEnd = (_: any, info: any) => {
+    // Swipe Right (Open/Join)
+    if (info.offset.x > 80) {
+      if (!isJoined) {
+        onJoin(circle.id);
+      }
+      // Give join state a moment to propagate if needed, but usually we can just select it
+      onSelect(circle);
+    }
+    // Swipe Left (Leave - only if joined)
+    else if (info.offset.x < -80 && isJoined) {
+      onLeave({ stopPropagation: () => {} } as any, circle.id);
+    }
+  };
+
+  return (
+    <motion.div 
+      drag="x"
+      dragConstraints={{ left: 0, right: 0 }}
+      onDragEnd={handleDragEnd}
+      whileDrag={{ scale: 1.02 }}
+      onClick={() => isJoined && onSelect(circle)}
+      className={`relative p-6 bg-white border border-stone-100 rounded-[2rem] shadow-sm hover:shadow-md transition-all group overflow-hidden touch-pan-y ${
+        isJoined ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'
+      }`}
+    >
+      {/* Swipe Indicators */}
+      <div className="absolute inset-y-0 left-0 w-1 bg-green-500 opacity-0 group-hover:opacity-20 transition-opacity" />
+      <div className="absolute inset-y-0 right-0 w-1 bg-red-500 opacity-0 group-hover:opacity-20 transition-opacity" />
+
+      <div className="flex justify-between items-start mb-2">
+        <div className="flex items-center gap-2">
+          <div className="w-10 h-10 bg-stone-100 rounded-xl overflow-hidden flex items-center justify-center text-[--color-brand]">
+            {circle.photoURL ? (
+              <img referrerPolicy="no-referrer" src={circle.photoURL} alt={circle.name} className="w-full h-full object-cover" />
+            ) : (
+              <Users size={20} />
+            )}
+          </div>
+          <div>
+            <h4 className="serif text-xl font-bold text-stone-900 flex items-center gap-2">
+              {circle.name}
+              {circle.privacy === 'PRIVATE' && <span className="text-[8px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded uppercase tracking-widest font-black">Private</span>}
+              {circle.privacy === 'HIDDEN' && <span className="text-[8px] bg-stone-100 text-stone-500 px-1.5 py-0.5 rounded uppercase tracking-widest font-black">Hidden</span>}
+            </h4>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {isJoined ? (
+            <div className="flex items-center gap-1 group/joined">
+              <div className="flex items-center gap-2 px-4 py-1.5 bg-stone-900 text-white rounded-full text-[10px] font-black uppercase tracking-widest shadow-md">
+                <ShieldCheck size={14} className="text-amber-400" />
+                <span>Joined</span>
+              </div>
+              <button 
+                onClick={(e) => onLeave(e, circle.id)}
+                className="p-2 text-stone-200 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                title="Leave Circle"
+              >
+                <LogOut size={16} />
+              </button>
+            </div>
+          ) : (
+            <button 
+              onClick={(e) => { e.stopPropagation(); onJoin(circle.id); }}
+              className="px-4 py-1.5 bg-stone-100 border border-stone-200 text-[--color-brand] rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-[--color-brand] hover:text-white transition-all shadow-sm"
+            >
+              Join
+            </button>
+          )}
+        </div>
+      </div>
+      <p className="text-stone-500 text-sm italic line-clamp-2 mb-4 leading-relaxed">
+        {circle.description || "A safe space for neighbors to connect and share."}
+      </p>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4 text-[10px] font-black uppercase tracking-[0.2em] text-stone-400">
+           <span className="flex items-center gap-1">
+             <Users size={12} strokeWidth={3} />
+             {circle.memberCount || 1} members
+           </span>
+           <span className="flex items-center gap-1">
+             <Star size={12} strokeWidth={3} />
+             Active
+           </span>
+        </div>
+        {isJoined ? (
+           <span className="text-[10px] font-black uppercase tracking-widest text-[#d4af37] opacity-0 group-hover:opacity-100 transition-opacity">
+             Enter Space →
+           </span>
+        ) : (
+          <span className="text-[10px] font-black uppercase tracking-widest text-stone-300 opacity-0 group-hover:opacity-100 transition-opacity">
+             Swipe Right to Join →
+          </span>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+export default function Circles({ onNavigateToChat, selectedCircleId, onClearSelection }: CirclesProps = {}) {
   const { user, profile } = useAuth();
   const [circles, setCircles] = useState<Circle[]>([]);
   const [loading, setLoading] = useState(true);
@@ -94,6 +250,16 @@ export default function Circles({ onNavigateToChat }: CirclesProps = {}) {
     fetchCircles();
     return () => unsubscribe();
   }, [profile?.joinedCircles]);
+
+  // Handle external selection (from App.tsx/Discovery)
+  useEffect(() => {
+    if (selectedCircleId && circles.length > 0) {
+      const circle = circles.find(c => c.id === selectedCircleId);
+      if (circle && profile?.joinedCircles?.includes(circle.id)) {
+        setSelectedCircle(circle);
+      }
+    }
+  }, [selectedCircleId, circles, profile?.joinedCircles]);
 
   useEffect(() => {
     if (!selectedCircle || circleView !== 'MEMBERS') return;
@@ -216,6 +382,7 @@ export default function Circles({ onNavigateToChat }: CirclesProps = {}) {
     // Unmount view BEFORE removing membership to prevent snapshot listeners from throwing permissions errors
     if (selectedCircle?.id === circleId) {
       setSelectedCircle(null);
+      onClearSelection?.();
     }
 
     // Give React time to unmount children and unsubscribe snapshot listeners
@@ -360,6 +527,7 @@ export default function Circles({ onNavigateToChat }: CirclesProps = {}) {
                 setSelectedChannel(null);
               } else {
                 setSelectedCircle(null);
+                onClearSelection?.();
               }
             }}
             className="flex items-center gap-2 text-stone-400 hover:text-stone-900 transition-colors mb-4 text-[10px] uppercase font-black tracking-widest"
@@ -860,76 +1028,14 @@ export default function Circles({ onNavigateToChat }: CirclesProps = {}) {
                   </h3>
                   <div className="space-y-4">
                     {filteredAndSortedCircles.filter(c => profile?.joinedCircles?.includes(c.id)).map(circle => (
-                      <div 
-                        key={circle.id} 
-                        onClick={() => profile?.joinedCircles?.includes(circle.id) && setSelectedCircle(circle)}
-                        className={`p-6 bg-white border border-stone-100 rounded-[2rem] shadow-sm hover:shadow-md transition-all group ${
-                          profile?.joinedCircles?.includes(circle.id) ? 'cursor-pointer' : ''
-                        }`}
-                      >
-                        <div className="flex justify-between items-start mb-2">
-                          <div className="flex items-center gap-2">
-                            <div className="w-10 h-10 bg-stone-100 rounded-xl overflow-hidden flex items-center justify-center text-[--color-brand]">
-                              {circle.photoURL ? (
-                                <img referrerPolicy="no-referrer" src={circle.photoURL} alt={circle.name} className="w-full h-full object-cover" />
-                              ) : (
-                                <Users size={20} />
-                              )}
-                            </div>
-                            <div>
-                              <h4 className="serif text-xl font-bold text-stone-900 flex items-center gap-2">
-                                {circle.name}
-                                {circle.privacy === 'PRIVATE' && <span className="text-[8px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded uppercase tracking-widest font-black">Private</span>}
-                                {circle.privacy === 'HIDDEN' && <span className="text-[8px] bg-stone-100 text-stone-500 px-1.5 py-0.5 rounded uppercase tracking-widest font-black">Hidden</span>}
-                              </h4>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {profile?.joinedCircles?.includes(circle.id) ? (
-                              <div className="flex items-center gap-1 group/joined">
-                                <div className="flex items-center gap-2 px-4 py-1.5 bg-stone-900 text-white rounded-full text-[10px] font-black uppercase tracking-widest shadow-md">
-                                  <ShieldCheck size={14} className="text-amber-400" />
-                                  <span>Joined</span>
-                                </div>
-                                <button 
-                                  onClick={(e) => handleLeave(e, circle.id)}
-                                  className="p-2 text-stone-200 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                                  title="Leave Circle"
-                                >
-                                  <LogOut size={16} />
-                                </button>
-                              </div>
-                            ) : (
-                              <button 
-                                onClick={() => handleJoin(circle.id)}
-                                className="px-4 py-1.5 bg-stone-100 border border-stone-200 text-[--color-brand] rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-[--color-brand] hover:text-white transition-all shadow-sm"
-                              >
-                                Join
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                        <p className="text-stone-500 text-sm italic line-clamp-2 mb-4 leading-relaxed">
-                          {circle.description || "A safe space for neighbors to connect and share."}
-                        </p>
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-4 text-[10px] font-black uppercase tracking-[0.2em] text-stone-400">
-                             <span className="flex items-center gap-1">
-                               <Users size={12} strokeWidth={3} />
-                               {circle.memberCount || 1} members
-                             </span>
-                             <span className="flex items-center gap-1">
-                               <Star size={12} strokeWidth={3} />
-                               Active
-                             </span>
-                          </div>
-                          {profile?.joinedCircles?.includes(circle.id) && (
-                             <span className="text-[10px] font-black uppercase tracking-widest text-[#d4af37] opacity-0 group-hover:opacity-100 transition-opacity">
-                               Enter Space →
-                             </span>
-                          )}
-                        </div>
-                      </div>
+                      <CircleCard 
+                        key={circle.id}
+                        circle={circle}
+                        profile={profile}
+                        onJoin={handleJoin}
+                        onLeave={handleLeave}
+                        onSelect={setSelectedCircle}
+                      />
                     ))}
                   </div>
                 </div>
@@ -941,76 +1047,14 @@ export default function Circles({ onNavigateToChat }: CirclesProps = {}) {
                   </h3>
                   <div className="space-y-4">
                     {filteredAndSortedCircles.filter(c => !profile?.joinedCircles?.includes(c.id)).map(circle => (
-                      <div 
-                        key={circle.id} 
-                        onClick={() => profile?.joinedCircles?.includes(circle.id) && setSelectedCircle(circle)}
-                        className={`p-6 bg-white border border-stone-100 rounded-[2rem] shadow-sm hover:shadow-md transition-all group ${
-                          profile?.joinedCircles?.includes(circle.id) ? 'cursor-pointer' : ''
-                        }`}
-                      >
-                        <div className="flex justify-between items-start mb-2">
-                          <div className="flex items-center gap-2">
-                            <div className="w-10 h-10 bg-stone-100 rounded-xl overflow-hidden flex items-center justify-center text-[--color-brand]">
-                              {circle.photoURL ? (
-                                <img referrerPolicy="no-referrer" src={circle.photoURL} alt={circle.name} className="w-full h-full object-cover" />
-                              ) : (
-                                <Users size={20} />
-                              )}
-                            </div>
-                            <div>
-                              <h4 className="serif text-xl font-bold text-stone-900 flex items-center gap-2">
-                                {circle.name}
-                                {circle.privacy === 'PRIVATE' && <span className="text-[8px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded uppercase tracking-widest font-black">Private</span>}
-                                {circle.privacy === 'HIDDEN' && <span className="text-[8px] bg-stone-100 text-stone-500 px-1.5 py-0.5 rounded uppercase tracking-widest font-black">Hidden</span>}
-                              </h4>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {profile?.joinedCircles?.includes(circle.id) ? (
-                              <div className="flex items-center gap-1 group/joined">
-                                <div className="flex items-center gap-2 px-4 py-1.5 bg-stone-900 text-white rounded-full text-[10px] font-black uppercase tracking-widest shadow-md">
-                                  <ShieldCheck size={14} className="text-amber-400" />
-                                  <span>Joined</span>
-                                </div>
-                                <button 
-                                  onClick={(e) => handleLeave(e, circle.id)}
-                                  className="p-2 text-stone-200 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                                  title="Leave Circle"
-                                >
-                                  <LogOut size={16} />
-                                </button>
-                              </div>
-                            ) : (
-                              <button 
-                                onClick={() => handleJoin(circle.id)}
-                                className="px-4 py-1.5 bg-stone-100 border border-stone-200 text-[--color-brand] rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-[--color-brand] hover:text-white transition-all shadow-sm"
-                              >
-                                Join
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                        <p className="text-stone-500 text-sm italic line-clamp-2 mb-4 leading-relaxed">
-                          {circle.description || "A safe space for neighbors to connect and share."}
-                        </p>
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-4 text-[10px] font-black uppercase tracking-[0.2em] text-stone-400">
-                             <span className="flex items-center gap-1">
-                               <Users size={12} strokeWidth={3} />
-                               {circle.memberCount || 1} members
-                             </span>
-                             <span className="flex items-center gap-1">
-                               <Star size={12} strokeWidth={3} />
-                               Active
-                             </span>
-                          </div>
-                          {profile?.joinedCircles?.includes(circle.id) && (
-                             <span className="text-[10px] font-black uppercase tracking-widest text-[#d4af37] opacity-0 group-hover:opacity-100 transition-opacity">
-                               Enter Space →
-                             </span>
-                          )}
-                        </div>
-                      </div>
+                      <CircleCard 
+                        key={circle.id}
+                        circle={circle}
+                        profile={profile}
+                        onJoin={handleJoin}
+                        onLeave={handleLeave}
+                        onSelect={setSelectedCircle}
+                      />
                     ))}
                   </div>
                 </div>
@@ -1018,76 +1062,14 @@ export default function Circles({ onNavigateToChat }: CirclesProps = {}) {
             </>
           ) : (
             filteredAndSortedCircles.map(circle => (
-              <div 
-                key={circle.id} 
-                onClick={() => profile?.joinedCircles?.includes(circle.id) && setSelectedCircle(circle)}
-                className={`p-6 bg-white border border-stone-100 rounded-[2rem] shadow-sm hover:shadow-md transition-all group ${
-                  profile?.joinedCircles?.includes(circle.id) ? 'cursor-pointer' : ''
-                }`}
-              >
-                <div className="flex justify-between items-start mb-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-10 h-10 bg-stone-100 rounded-xl overflow-hidden flex items-center justify-center text-[--color-brand]">
-                      {circle.photoURL ? (
-                        <img referrerPolicy="no-referrer" src={circle.photoURL} alt={circle.name} className="w-full h-full object-cover" />
-                      ) : (
-                        <Users size={20} />
-                      )}
-                    </div>
-                    <div>
-                      <h4 className="serif text-xl font-bold text-stone-900 flex items-center gap-2">
-                        {circle.name}
-                        {circle.privacy === 'PRIVATE' && <span className="text-[8px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded uppercase tracking-widest font-black">Private</span>}
-                        {circle.privacy === 'HIDDEN' && <span className="text-[8px] bg-stone-100 text-stone-500 px-1.5 py-0.5 rounded uppercase tracking-widest font-black">Hidden</span>}
-                      </h4>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {profile?.joinedCircles?.includes(circle.id) ? (
-                      <div className="flex items-center gap-1 group/joined">
-                        <div className="flex items-center gap-2 px-4 py-1.5 bg-stone-900 text-white rounded-full text-[10px] font-black uppercase tracking-widest shadow-md">
-                          <ShieldCheck size={14} className="text-amber-400" />
-                          <span>Joined</span>
-                        </div>
-                        <button 
-                          onClick={(e) => handleLeave(e, circle.id)}
-                          className="p-2 text-stone-200 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                          title="Leave Circle"
-                        >
-                          <LogOut size={16} />
-                        </button>
-                      </div>
-                    ) : (
-                      <button 
-                        onClick={() => handleJoin(circle.id)}
-                        className="px-4 py-1.5 bg-stone-100 border border-stone-200 text-[--color-brand] rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-[--color-brand] hover:text-white transition-all shadow-sm"
-                      >
-                        Join
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <p className="text-stone-500 text-sm italic line-clamp-2 mb-4 leading-relaxed">
-                  {circle.description || "A safe space for neighbors to connect and share."}
-                </p>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4 text-[10px] font-black uppercase tracking-[0.2em] text-stone-400">
-                     <span className="flex items-center gap-1">
-                       <Users size={12} strokeWidth={3} />
-                       {circle.memberCount || 1} members
-                     </span>
-                     <span className="flex items-center gap-1">
-                       <Star size={12} strokeWidth={3} />
-                       Active
-                     </span>
-                  </div>
-                  {profile?.joinedCircles?.includes(circle.id) && (
-                     <span className="text-[10px] font-black uppercase tracking-widest text-[#d4af37] opacity-0 group-hover:opacity-100 transition-opacity">
-                       Enter Space →
-                     </span>
-                  )}
-                </div>
-              </div>
+              <CircleCard 
+                key={circle.id}
+                circle={circle}
+                profile={profile}
+                onJoin={handleJoin}
+                onLeave={handleLeave}
+                onSelect={setSelectedCircle}
+              />
             ))
           )
         ) : (

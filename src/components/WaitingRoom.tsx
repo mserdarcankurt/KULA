@@ -1,3 +1,28 @@
+/**
+ * FILE: WaitingRoom.tsx
+ * ROLE IN KULA: The "Holding Pattern" — shown while a new user waits for host approval.
+ * 
+ * CIRCUIT A (Sacred Space Gatekeeper):
+ *   This is Step 3 of the onboarding cascade. App.tsx shows this when:
+ *     - User IS logged in
+ *     - User HAS a hostId (they entered an invite code in InviteGate.tsx)
+ *     - BUT hostStatus is 'PENDING' (host hasn't approved yet)
+ * 
+ * HOW APPROVAL WORKS:
+ *   The HOST sees a notification (via GuardianDashboard or Profile.tsx) that someone
+ *   used their invite code. They click "Approve" which sets hostStatus → 'APPROVED'.
+ *   This component uses onSnapshot on the HOST's profile to show their name/photo.
+ *   When the approval happens, useAuth.tsx's listener detects the profile change,
+ *   App.tsx re-evaluates conditions, and the user is AUTOMATICALLY navigated to
+ *   Onboarding.tsx — no page refresh needed.
+ * 
+ * DESIGN INTENT:
+ *   Rather than a boring loading screen, this component:
+ *   - Shows the host's photo and name (builds anticipation)
+ *   - Rotates through KULA's core values (educates while waiting)
+ *   - Explains WHY the app is invite-only (builds trust in the model)
+ *   - Uses animated dots ("Waiting for Alice...") for a living, breathing feel
+ */
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { useAuth } from '../hooks/useAuth';

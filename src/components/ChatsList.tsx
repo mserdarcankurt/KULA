@@ -1,3 +1,36 @@
+/**
+ * FILE: ChatsList.tsx
+ * ROLE IN KULA: The "Inbox" — lists all conversations and manages chat navigation.
+ * 
+ * CIRCUIT D (Conversation Loop):
+ *   This is the ENTRY POINT for all chat interactions. It shows:
+ *     - Active conversations (sorted by most recent message)
+ *     - Archived conversations (hidden but recoverable)
+ *   When a user selects a conversation, it renders ChatRoom.tsx inline.
+ * 
+ * DATA FLOW:
+ *   1. Subscribes to `chats WHERE participants contains currentUserId` (onSnapshot)
+ *   2. Sorts by updatedAt (most recent first)
+ *   3. Splits into active vs archived based on `archivedBy` array
+ *   4. For each chat, ChatPreview fetches the OTHER participant's profile
+ *   5. Shows unread indicator if `unreadBy` includes the current user
+ * 
+ * ARCHIVE SYSTEM:
+ *   Archiving is PER-USER. When Alice archives a chat with Bob:
+ *     - Alice's UID is added to `archivedBy` array
+ *     - Bob still sees the chat as active
+ *   If Bob sends a new message, chatService.ts clears `archivedBy: []`,
+ *   which UN-ARCHIVES the chat for Alice automatically.
+ * 
+ * NESTED NAVIGATION:
+ *   When selectedChatId is set, the entire list is REPLACED by a ChatRoom view
+ *   with a back button header (ActiveChatHeader). This creates a "drill-down"
+ *   navigation pattern without a router.
+ * 
+ * USED BY: App.tsx (the 'chats' tab)
+ * CREATES CHATS: chatService.ts → getOrCreateChat()
+ * REAL-TIME: useUnreadCount.ts listens to the same data for badge counts
+ */
 import React, { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, query, where, onSnapshot, orderBy, doc, getDoc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';

@@ -1,8 +1,34 @@
+/**
+ * FILE: NotificationsOverlay.tsx
+ * ROLE IN KULA: The "Alert Panel" — shows system notifications in a dropdown overlay.
+ * 
+ * CIRCUIT D (Conversation Loop):
+ *   Notifications are CREATED by Cloud Functions (functions/index.ts) server-side.
+ *   When someone vouches for you, joins your İmece, or matches with your item,
+ *   a Cloud Function writes to `notifications/{id}` with your userId.
+ *   This component subscribes to that collection via onSnapshot (real-time).
+ * 
+ * NOTIFICATION TYPES (color-coded):
+ *   - MESSAGE (blue): Someone sent you a direct message
+ *   - IMECE (amber): Someone joined your collective action
+ *   - VOUCH_REQUEST / VOUCH_ACCEPTED (emerald): Trust endorsement activity
+ *   - Default (stone): Other system notifications
+ * 
+ * MARK AS READ:
+ *   Clicking a notification calls updateDoc → isRead: true.
+ *   This ALSO decrements the badge count in useUnreadCount.ts
+ *   (because its query filters for isRead == false).
+ * 
+ * OPENED BY: Header.tsx (clicking the bell icon)
+ * COUNTED BY: useUnreadCount.ts (drives the red dot on the bell)
+ * 
+ * SECURITY: firestore.rules ensures you can only read/update YOUR OWN notifications.
+ */
 import React, { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, query, where, orderBy, onSnapshot, updateDoc, doc, limit } from 'firebase/firestore';
 import { useAuth } from '../hooks/useAuth';
-import { Bell, X, Check, Info, HeartHandshake, MessageSquare, Clock } from 'lucide-react';
+import { Bell, X, Check, Info, HeartHandshake, MessageSquare, Clock, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -74,10 +100,14 @@ export default function NotificationsOverlay({ onClose }: NotificationsOverlayPr
               >
                 <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center ${
                   notif.type === 'MESSAGE' ? 'bg-blue-100 text-blue-600' : 
-                  notif.type === 'IMECE' ? 'bg-amber-100 text-amber-600' : 'bg-stone-100 text-stone-600'
+                  notif.type === 'IMECE' ? 'bg-amber-100 text-amber-600' :
+                  notif.type === 'VOUCH_REQUEST' || notif.type === 'VOUCH_ACCEPTED' ? 'bg-emerald-100 text-emerald-600' :
+                  'bg-stone-100 text-stone-600'
                 }`}>
                   {notif.type === 'MESSAGE' ? <MessageSquare size={14} /> : 
-                   notif.type === 'IMECE' ? <HeartHandshake size={14} /> : <Info size={14} />}
+                   notif.type === 'IMECE' ? <HeartHandshake size={14} /> :
+                   notif.type === 'VOUCH_REQUEST' || notif.type === 'VOUCH_ACCEPTED' ? <Sparkles size={14} /> :
+                   <Info size={14} />}
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs text-stone-800 leading-snug">{notif.content}</p>
