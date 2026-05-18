@@ -1,8 +1,219 @@
+// ═══════════════════════════════════════════════════════════════
+// FILE: firestore.rules
+// ROLE IN KULA: The "Security Perimeter" — the ONLY thing standing between
+// the public internet and your community's data.
+//
+// HOW FIRESTORE RULES WORK:
+//   Every time ANY code in the app tries to read/write data to Firestore,
+//   Google's servers check these rules FIRST. If the rules say "deny",
+//   the operation fails and firebase.ts → handleFirestoreError() catches it.
+//   These rules run SERVER-SIDE — the user cannot bypass them.
+//
+// CONNECTION TO THE APP:
+//   - useAuth.tsx → setDoc(profileRef, newProfile): checked by the /users/{userId} CREATE rule
+//   - useItems.ts → onSnapshot(query(...)): checked by the /items/{itemId} READ rule
+//   - chatService.ts → addDoc(chatsRef, {...}): checked by the /chats/{chatId} CREATE rule
+//   - ChatRoom.tsx → addDoc(messagesRef, {...}): checked by the /messages/{messageId} CREATE rule
+//
+// SECURITY LAYERS:
+//   1. isSignedIn(): Most basic check — you must have a Firebase Auth session.
+//   2. isOwner(userId): You can only modify YOUR OWN data.
+//   3. isAdmin(): Admins (set via isAdmin: true in UserProfile) can moderate.
+//   4. resource.data checks: Fine-grained field-level validation.
+// ═══════════════════════════════════════════════════════════════
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if true;
+
+    // ─── Helper Functions ─────────────────────────────────
+    // These are reusable checks used throughout the rules below.
+
+    // isSignedIn(): Returns true if the request has a valid Firebase Auth token.
+    // This is the MINIMUM bar — anonymous/unauthenticated access is NEVER allowed.
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // isOwner(userId): Returns true if the logged-in user's UID matches the
+    // document's userId. This prevents User A from editing User B's profile.
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // isAdmin(): Looks up the requesting user's profile in Firestore and checks
+    // if their `isAdmin` field is true. This is a SERVER-SIDE check — even if
+    // someone hacks the client to show isAdmin: true, this rule re-verifies.
+    // NOTE: This performs an extra Firestore read per request (costs money at scale).
+    function isAdmin() {
+      return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+    }
+
+    // ─── Users ────────────────────────────────────────────
+    // Collection: users/{userId}
+    // Created by: useAuth.tsx (on first login)
+    // Read by: useTrustNetwork.ts, useNetworkGraph.ts, PublicProfile.tsx, etc.
+    match /users/{userId} {
+      // READ: Any authenticated user can read ANY profile.
+      // WHY SO OPEN? The trust network (useTrustNetwork.ts) needs to fetch ALL users
+      // to build the graph. Client-side visibility filtering (trustGraph.ts) handles
+      // the privacy layer — this rule just ensures unauthenticated users can't read.
+      allow read: if isSignedIn();
+
+      // CREATE: You can only create YOUR OWN profile.
+      // This prevents someone from creating a fake profile under another user's UID.
+      allow create: if isOwner(userId);
+
+      // UPDATE: You can update your own profile OR an admin can update any profile.
+      // The admin path is used for: approving guest requests (hostStatus → APPROVED),
+      // verifying organizations, and moderation.
+      allow update: if isOwner(userId) || isAdmin();
+
+      // DELETE: Only admins can delete profiles (for banning).
+      allow delete: if isAdmin();
+    }
+
+    // ─── Items (Asks, Shares, İmece, Missions, Joins) ─────
+    // Collection: items/{itemId}
+    // Created by: PostItem.tsx
+    // Read by: useItems.ts → Explore.tsx, Discovery.tsx
+    match /items/{itemId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+
+      // UPDATE: Currently allows ANY signed-in user to update.
+      // WHY? IMECE items need participants to add themselves to the
+      // `participants[]` array. A tighter rule would check:
+      // `request.auth.uid in resource.data.participants || isOwner(resource.data.ownerId)`
+      // TODO: Tighten this for production.
+      allow update: if isSignedIn();
+      
+      // DELETE: Only the owner or an admin can delete items.
+      allow delete: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
+
+      // Comments sub-collection: items/{itemId}/comments/{commentId}
+      // Anyone can read/create. Only the comment author can edit/delete their own.
+      match /comments/{commentId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn();
+        allow update, delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+      }
+    }
+
+    // ─── Circles ──────────────────────────────────────────
+    // Collection: circles/{circleId}
+    // Created by: Circles.tsx (Create Circle flow)
+    // Read by: Circles.tsx, useItems.ts (for circle-specific item filtering)
+    match /circles/{circleId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+
+      // UPDATE: Currently allows any signed-in user.
+      // WHY? Members need to update memberCount when joining/leaving.
+      // TODO: Tighten to only allow creator/admin or specific field updates.
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn() && (resource.data.creatorId == request.auth.uid || isAdmin());
+
+      // Members sub-collection: circles/{circleId}/members/{memberId}
+      // Users can add themselves (join) and remove themselves (leave).
+      // Admins can remove anyone (kick).
+      match /members/{memberId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn();
+        allow delete: if isSignedIn() && (memberId == request.auth.uid || isAdmin());
+      }
+    }
+
+    // ─── Chats ────────────────────────────────────────────
+    // Collection: chats/{chatId}
+    // Created by: chatService.ts → getOrCreateChat()
+    // Read by: ChatsList.tsx, ChatRoom.tsx
+    match /chats/{chatId} {
+      // READ/UPDATE: Only PARTICIPANTS can access their own chats.
+      // This is the tightest rule — you cannot read someone else's conversations.
+      // Connection: chatService.ts always adds both users to `participants[]` on create.
+      allow read: if isSignedIn() && request.auth.uid in resource.data.participants;
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() && request.auth.uid in resource.data.participants;
+      allow delete: if isAdmin();
+
+      // Messages sub-collection: chats/{chatId}/messages/{messageId}
+      // Currently open to all signed-in users for read/create/update.
+      // WHY? Channel messages (in Circles) need to be readable by all circle members,
+      // and the participant check is on the parent chat document.
+      // TODO: For DIRECT chats, consider inheriting the parent's participant check.
+      match /messages/{messageId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn();
+        allow update: if isSignedIn();
+        allow delete: if isAdmin();
+      }
+    }
+
+    // ─── Swipes ───────────────────────────────────────────
+    // Collection: swipes/{swipeId}
+    // Created by: ItemDetailsSheet.tsx (when user swipes LIKE or PASS)
+    // Read by: Explore.tsx (to avoid showing already-swiped items)
+    match /swipes/{swipeId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow delete: if isAdmin();
+    }
+
+    // ─── Notifications ────────────────────────────────────
+    // Collection: notifications/{notifId}
+    // Created by: Cloud Functions (functions/index.ts) — server-side
+    // Read by: useUnreadCount.ts → NotificationsOverlay.tsx
+    match /notifications/{notifId} {
+      // READ: You can ONLY read YOUR OWN notifications.
+      // This prevents users from seeing each other's notification history.
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn();
+      // UPDATE: You can mark YOUR OWN notifications as read.
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow delete: if isAdmin();
+    }
+
+    // ─── Gratitude Notes ──────────────────────────────────
+    // Collection: gratitude_notes/{noteId}
+    // Created by: GratitudeFlow.tsx (after completing an exchange)
+    // Read by: Profile.tsx (to display received gratitude)
+    // Connection: When created, also updates the recipient's TrustMosaic.completedExchanges
+    match /gratitude_notes/{noteId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow delete: if isAdmin();
+    }
+
+    // ─── Vouches ──────────────────────────────────────────
+    // Collection: vouches/{vouchId}
+    // Created by: PublicProfile.tsx (the "Vouch" button)
+    // Read by: useTrustNetwork.ts (to build HORIZONTAL trust edges)
+    // Connection: ACCEPTED vouches appear as green lines in LineageTree.tsx
+    match /vouches/{vouchId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      // UPDATE/DELETE: Either the sender (fromUserId) or recipient (toUserId) can
+      // accept or decline. This enables the "Accept Vouch" flow in PublicProfile.tsx.
+      allow update: if isSignedIn() && (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid);
+      allow delete: if isSignedIn() && (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid || isAdmin());
+    }
+
+    // ─── Reviews ──────────────────────────────────────────
+    // Collection: reviews/{reviewId}
+    // Created by: Profile.tsx or ItemDetailsSheet.tsx (after exchange)
+    // Read by: PublicProfile.tsx (to display reviews on someone's profile)
+    match /reviews/{reviewId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      // Only the REVIEWER can edit/delete their own review.
+      allow update, delete: if isSignedIn() && resource.data.reviewerId == request.auth.uid;
+    }
+
+    // ─── Test Connection Doc ──────────────────────────────
+    // Used by: firebase.ts → testConnection() at boot time.
+    // This document may not actually exist — the test just checks if Firestore responds.
+    match /test/{docId} {
+      allow read: if isSignedIn();
     }
   }
 }

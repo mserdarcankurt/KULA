@@ -8,6 +8,10 @@
     ],
     "rewrites": [
       {
+        "source": "/api/seed",
+        "function": "seed"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
