@@ -54,7 +54,7 @@ async function seed() {
       userName: userNames[(i + 1) % 10],
       userPhoto: `https://api.dicebear.com/7.x/avataaars/svg?seed=${userNames[(i + 1) % 10]}`,
       content: "This sounds great! I am interested.",
-      createdAt: serverTimestamp()
+      createdAt: new Date()
     }] : [];
 
     const laterComments = i % 3 === 0 ? [{
@@ -63,7 +63,7 @@ async function seed() {
       userName: userNames[(i + 2) % 10],
       userPhoto: `https://api.dicebear.com/7.x/avataaars/svg?seed=${userNames[(i + 2) % 10]}`,
       content: "Is this still available?",
-      createdAt: serverTimestamp()
+      createdAt: new Date()
     }] : [];
 
     // 1 Share (Give)

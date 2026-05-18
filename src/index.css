@@ -1,6 +1,45 @@
+/**
+ * FILE: index.css
+ * ROLE IN KULA: The "Design Tokens" — defines the visual DNA of the entire application.
+ * 
+ * LOADED BY: main.tsx (imported as the very first CSS file, before any component renders)
+ * 
+ * HOW THIS CONNECTS TO EVERYTHING:
+ * 
+ * 1. FONTS:
+ *    - "Inter" (sans-serif): Used for ALL body text, buttons, labels.
+ *      Set via --font-sans and applied to <body> via @apply font-sans.
+ *    - "Cormorant Garamond" (serif): Used for decorative headings and the
+ *      Welcome screen. Applied via the .serif utility class.
+ *    Both fonts are loaded from Google Fonts via the @import URL above.
+ * 
+ * 2. BRAND COLORS:
+ *    - --color-brand (#5A5A40): A warm olive-green. This is the PRIMARY accent
+ *      color used across the app — buttons, active states, the loading spinner
+ *      in App.tsx, navigation highlights in Navigation.tsx.
+ *    - --color-brand-light (#f5f5f0): A warm off-white cream. Used as the
+ *      background color for the entire app body and the loading screen.
+ *    These CSS custom properties are referenced throughout components using
+ *    Tailwind's arbitrary value syntax: bg-[--color-brand-light], text-[--color-brand]
+ * 
+ * 3. UTILITY CLASSES:
+ *    - .no-scrollbar: Hides scrollbars while keeping scroll functionality.
+ *      Used in horizontally-scrollable sections like the Circle member list
+ *      in Circles.tsx and the category picker in PostItem.tsx.
+ *    - .pb-safe / .pt-safe: Adds padding for the "safe area" on phones with
+ *      notches or home indicators (iPhone X+). Applied to Navigation.tsx
+ *      (bottom) and Header.tsx (top) to prevent content from being hidden
+ *      behind the phone's hardware UI.
+ * 
+ * CONNECTION TO artDirection.ts:
+ *   artDirection.ts defines `backgrounds.primary: "bg-stone-50"` which is
+ *   a Tailwind class. The warm stone colors complement the --color-brand
+ *   olive-green defined here. Together they create the "Berlin Analog" palette.
+ */
 @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Inter:wght@400;500;600&display=swap');
 @import "tailwindcss";
 
+/* Tailwind v4 @theme directive — defines custom design tokens */
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-serif: "Cormorant Garamond", serif;
@@ -9,14 +48,17 @@
   --color-brand-light: #f5f5f0;
 }
 
+/* Apply the warm, earthy defaults to the entire page */
 body {
   @apply font-sans bg-[--color-brand-light] text-stone-900;
 }
 
+/* Serif utility for decorative text (Welcome screen, section headers) */
 .serif {
   @apply font-serif;
 }
 
+/* Hide scrollbars but keep scroll functionality (for horizontal scroll areas) */
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
@@ -26,6 +68,9 @@ body {
   scrollbar-width: none;
 }
 
+/* Safe area padding for phones with notches (iPhone X+, Android punch-holes) */
+/* env(safe-area-inset-bottom) is a CSS environment variable set by the browser */
+/* based on the device's physical hardware. On a notchless phone, it's 0. */
 .pb-safe {
   padding-bottom: env(safe-area-inset-bottom);
 }
