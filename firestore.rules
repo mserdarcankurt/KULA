@@ -63,10 +63,8 @@ service cloud.firestore {
       // This prevents someone from creating a fake profile under another user's UID.
       allow create: if isOwner(userId);
 
-      // UPDATE: You can update your own profile OR an admin can update any profile.
-      // The admin path is used for: approving guest requests (hostStatus → APPROVED),
-      // verifying organizations, and moderation.
-      allow update: if isOwner(userId) || isAdmin();
+      // UPDATE: You can update your own profile (except sensitive fields) OR an admin can update any profile.
+      allow update: if (isOwner(userId) && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin', 'hostStatus']))) || isAdmin();
 
       // DELETE: Only admins can delete profiles (for banning).
       allow delete: if isAdmin();
@@ -89,12 +87,12 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow create: if isSignedIn();
 
-      // UPDATE: Currently allows ANY signed-in user to update.
-      // WHY? IMECE items need participants to add themselves to the
-      // `participants[]` array. A tighter rule would check:
-      // `request.auth.uid in resource.data.participants || isOwner(resource.data.ownerId)`
-      // TODO: Tighten this for production.
-      allow update: if isSignedIn();
+      // UPDATE: Restricted to owner/admin OR only appending to participants array
+      allow update: if isSignedIn() && (
+        resource.data.ownerId == request.auth.uid || 
+        isAdmin() || 
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participants'])
+      );
       
       // DELETE: Only the owner or an admin can delete items.
       allow delete: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
@@ -116,10 +114,12 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow create: if isSignedIn();
 
-      // UPDATE: Currently allows any signed-in user.
-      // WHY? Members need to update memberCount when joining/leaving.
-      // TODO: Tighten to only allow creator/admin or specific field updates.
-      allow update: if isSignedIn();
+      // UPDATE: Restricted to creator/admin OR only memberCount updates.
+      allow update: if isSignedIn() && (
+        resource.data.creatorId == request.auth.uid || 
+        isAdmin() || 
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberCount'])
+      );
       allow delete: if isSignedIn() && (resource.data.creatorId == request.auth.uid || isAdmin());
 
       // Members sub-collection: circles/{circleId}/members/{memberId}
@@ -146,14 +146,8 @@ service cloud.firestore {
       allow delete: if isAdmin();
 
       // Messages sub-collection: chats/{chatId}/messages/{messageId}
-      // Currently open to all signed-in users for read/create/update.
-      // WHY? Channel messages (in Circles) need to be readable by all circle members,
-      // and the participant check is on the parent chat document.
-      // TODO: For DIRECT chats, consider inheriting the parent's participant check.
       match /messages/{messageId} {
-        allow read: if isSignedIn();
-        allow create: if isSignedIn();
-        allow update: if isSignedIn();
+        allow read, create, update: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
         allow delete: if isAdmin();
       }
     }
@@ -163,8 +157,8 @@ service cloud.firestore {
     // Created by: ItemDetailsSheet.tsx (when user swipes LIKE or PASS)
     // Read by: Explore.tsx (to avoid showing already-swiped items)
     match /swipes/{swipeId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn();
+      allow read: if isSignedIn() && resource.data.swiperId == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.swiperId == request.auth.uid;
       allow delete: if isAdmin();
     }
 
@@ -200,7 +194,7 @@ service cloud.firestore {
     // Connection: ACCEPTED vouches appear as green lines in LineageTree.tsx
     match /vouches/{vouchId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.fromUserId == request.auth.uid;
       // UPDATE/DELETE: Either the sender (fromUserId) or recipient (toUserId) can
       // accept or decline. This enables the "Accept Vouch" flow in PublicProfile.tsx.
       allow update: if isSignedIn() && (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid);
@@ -213,7 +207,7 @@ service cloud.firestore {
     // Read by: PublicProfile.tsx (to display reviews on someone's profile)
     match /reviews/{reviewId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.reviewerId == request.auth.uid;
       // Only the REVIEWER can edit/delete their own review.
       allow update, delete: if isSignedIn() && resource.data.reviewerId == request.auth.uid;
     }
