@@ -36,12 +36,23 @@
  */
 import React, { useState, useEffect, useRef } from 'react';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, doc, updateDoc, getDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, doc, updateDoc, getDoc, arrayUnion, arrayRemove, setDoc } from 'firebase/firestore';
 import { useAuth } from '../hooks/useAuth';
 import { Message, Item, Chat, UserProfile, Circle } from '../types';
-import { Send, Smile, Languages, Loader2, MessageSquare, CheckCircle2, Package, Clock, BarChart2, Plus, Info, X, Users } from 'lucide-react';
+import { Send, Smile, Languages, Loader2, MessageSquare, CheckCircle2, Clock, Plus, Info, X, Users, Heart, ArrowLeft, BarChart2 } from 'lucide-react';
+
 import { translateText } from '../services/geminiService';
 import { motion, AnimatePresence } from 'motion/react';
+import { sendNotification } from '../lib/notifications';
+import { getFallbackImage } from '../lib/artDirection';
+import GratitudeFlow from './GratitudeFlow';
+
+const EMOJIS = [
+  '😊', '👋', '❤️', '👍', '🙌', '🎉', '✨', '🌟', '💬', '💡',
+  '🏡', '🤝', '🙏', '🛠️', '🚲', '📦', '🎨', '🌱', '🌸', '☕',
+  '🍕', '🍎', '🧺', '📚', '🧸', '🐱', '🐶', '🍷', '👟', '🌍'
+];
+
 
 interface ChatRoomProps {
   chatId: string;
@@ -55,10 +66,12 @@ interface ChatMessageProps {
   onClaim: (msgId: string) => void;
   onReply: (msg: Message) => void;
   onOpenThread?: (msg: Message) => void;
+  displayName?: string;
+  onJoinCircle?: (circleId: string, circleName: string) => void;
 }
 
-const ChatMessage: React.FC<ChatMessageProps> = ({ msg, isOwn, targetLanguage, onVote, onClaim, onReply, onOpenThread }) => {
-  const { user } = useAuth();
+const ChatMessage: React.FC<ChatMessageProps> = ({ msg, isOwn, targetLanguage, onVote, onClaim, onReply, onOpenThread, displayName, onJoinCircle }) => {
+  const { user, profile } = useAuth();
   const [translatedText, setTranslatedText] = useState<string | null>(null);
   const [isTranslating, setIsTranslating] = useState(false);
   const [showOriginal, setShowOriginal] = useState(true);
@@ -197,6 +210,60 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ msg, isOwn, targetLanguage, o
     );
   }
 
+  if (msg.type === 'INVITE' && msg.invite) {
+    const isJoined = profile?.joinedCircles?.includes(msg.invite.circleId);
+    
+    return (
+      <div className="flex justify-center w-full my-6 px-4">
+        <motion.div 
+          initial={{ scale: 0.95, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          className="w-full max-w-md bg-[#FDFBF4] rounded-[2rem] overflow-hidden shadow-xl border border-[#D9D0C0] p-6 text-stone-900"
+        >
+          <div className="flex items-center gap-4 mb-4">
+            <div className="w-16 h-16 rounded-2xl overflow-hidden border border-[#D9D0C0] shrink-0 bg-stone-100">
+              {msg.invite.circlePhotoURL ? (
+                <img src={msg.invite.circlePhotoURL} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center bg-stone-100 text-stone-400">
+                  <Users size={28} />
+                </div>
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-[#a29b8c] mb-1">
+                Circle Invitation
+              </h4>
+              <h3 className="serif text-lg font-bold text-stone-900 truncate">
+                {msg.invite.circleName}
+              </h3>
+              <p className="text-xs text-stone-500 mt-0.5">
+                Join our neighborhood circle
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {isJoined ? (
+              <div className="w-full py-3.5 bg-stone-100 text-stone-500 rounded-2xl font-black text-xs uppercase tracking-widest border border-stone-200 flex items-center justify-center gap-2">
+                <CheckCircle2 size={16} className="text-emerald-600" />
+                Joined 🤝
+              </div>
+            ) : (
+              <button 
+                onClick={() => onJoinCircle?.(msg.invite!.circleId, msg.invite!.circleName)}
+                className="w-full py-3.5 bg-stone-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-md hover:bg-black transition-all active:scale-95 flex items-center justify-center gap-2"
+              >
+                <Users size={16} />
+                Join Circle
+              </button>
+            )}
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
   if (msg.type === 'SYSTEM') {
     return (
       <div className="flex justify-center w-full my-4 px-8">
@@ -208,12 +275,14 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ msg, isOwn, targetLanguage, o
     );
   }
 
+  const finalDisplayName = displayName || msg.senderName;
+
   return (
     <div className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}>
       <div className="flex flex-col max-w-[80%] gap-1">
-        {!isOwn && msg.senderName && (
-          <span className="text-[10px] font-black uppercase tracking-widest text-stone-400 ml-1 mb-1">
-            {msg.senderName}
+        {finalDisplayName && (
+          <span className={`text-[10px] font-black uppercase tracking-widest text-stone-400 mb-1 ${isOwn ? 'text-right pr-1' : 'pl-1'}`}>
+            {finalDisplayName}
           </span>
         )}
         {msg.replyToText && (
@@ -262,7 +331,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ msg, isOwn, targetLanguage, o
         {msg.replyCount && msg.replyCount > 0 && (
           <button 
             onClick={() => onOpenThread(msg)}
-            className={`text-[10px] font-black text-[--color-brand] uppercase tracking-widest mt-1 flex items-center gap-1 hover:underline ${isOwn ? 'self-end' : 'self-start'}`}
+            className={`text-[10px] font-black text-brand uppercase tracking-widest mt-1 flex items-center gap-1 hover:underline ${isOwn ? 'self-end' : 'self-start'}`}
           >
             <MessageSquare size={10} />
             {msg.replyCount} {msg.replyCount === 1 ? 'reply' : 'replies'}
@@ -294,8 +363,106 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
   const [pollQuestion, setPollQuestion] = useState('');
   const [pollOptions, setPollOptions] = useState(['', '']);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const chatRef = useRef<Chat | null>(null);
+  const [showGratitudeFlow, setShowGratitudeFlow] = useState(false);
+
+  const [gratitudeSent, setGratitudeSent] = useState(false);
 
   const targetLanguage = profile?.preferredLanguage || 'English';
+
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const emojiPickerRef = useRef<HTMLDivElement>(null);
+  const smileButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        emojiPickerRef.current && 
+        !emojiPickerRef.current.contains(event.target as Node) &&
+        smileButtonRef.current &&
+        !smileButtonRef.current.contains(event.target as Node)
+      ) {
+        setShowEmojiPicker(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
+  const insertEmoji = (emoji: string) => {
+    if (!inputRef.current) {
+      setText(prev => prev + emoji);
+      return;
+    }
+    const input = inputRef.current;
+    const start = input.selectionStart ?? text.length;
+    const end = input.selectionEnd ?? text.length;
+    const newText = text.substring(0, start) + emoji + text.substring(end);
+    setText(newText);
+    
+    setTimeout(() => {
+      input.focus();
+      input.setSelectionRange(start + emoji.length, start + emoji.length);
+    }, 0);
+  };
+
+
+  const [userCache, setUserCache] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const missingUids = new Set<string>();
+    messages.forEach(msg => {
+      if (!msg.senderName && msg.senderId && !userCache[msg.senderId]) {
+        missingUids.add(msg.senderId);
+      }
+    });
+    threadMessages.forEach(msg => {
+      if (!msg.senderName && msg.senderId && !userCache[msg.senderId]) {
+        missingUids.add(msg.senderId);
+      }
+    });
+
+    if (missingUids.size === 0) return;
+
+    missingUids.forEach(async (uid) => {
+      try {
+        const userSnap = await getDoc(doc(db, 'users', uid));
+        if (userSnap.exists()) {
+          const data = userSnap.data();
+          setUserCache(prev => ({
+            ...prev,
+            [uid]: data.displayName || 'Neighbor'
+          }));
+        }
+      } catch (err) {
+        console.error("Error fetching user name for message:", err);
+      }
+    });
+  }, [messages, threadMessages, userCache]);
+
+  useEffect(() => {
+    if (!item?.id || !user?.uid) {
+      setGratitudeSent(false);
+      return;
+    }
+
+    const q = query(
+      collection(db, 'gratitude_notes'),
+      where('itemId', '==', item.id),
+      where('fromUserId', '==', user.uid)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setGratitudeSent(!snapshot.empty);
+    }, (error) => {
+      console.error('Error querying gratitude notes:', error);
+    });
+
+    return () => unsubscribe();
+  }, [item?.id, user?.uid]);
 
   useEffect(() => {
     const unsubscribeChat = onSnapshot(doc(db, 'chats', chatId), (snapshot) => {
@@ -351,18 +518,8 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
       handleFirestoreError(error, OperationType.GET, `chats/${chatId}`);
     });
 
-    const baseQueryConstraints: any[] = [];
-    if (chat) {
-      if (chat.type === 'CHANNEL' && chat.circleId) {
-        baseQueryConstraints.push(where('circleId', '==', chat.circleId));
-      } else {
-        baseQueryConstraints.push(where('participants', 'array-contains', user.uid));
-      }
-    }
-
     const q = query(
       collection(db, 'chats', chatId, 'messages'),
-      ...baseQueryConstraints,
       orderBy('createdAt', 'asc')
     );
 
@@ -382,18 +539,28 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
     };
   }, [chatId]);
 
+  // Keep chatRef always up-to-date so other effects can read the latest chat
+  // without needing `chat` in their dependency array (which would cause re-subscriptions)
+  useEffect(() => {
+    chatRef.current = chat;
+  }, [chat]);
+
+
   useEffect(() => {
     if (!activeThread) {
       setThreadMessages([]);
       return;
     }
 
+    // Always read the latest chat from the ref — avoids stale closure where
+    // `chat` captured when the thread was opened might have an outdated circleId
+    const currentChat = chatRef.current;
     const baseQueryConstraints: any[] = [];
-    if (chat) {
-      if (chat.type === 'CHANNEL' && chat.circleId) {
-        baseQueryConstraints.push(where('circleId', '==', chat.circleId));
+    if (currentChat) {
+      if (currentChat.type === 'CHANNEL' && currentChat.circleId) {
+        baseQueryConstraints.push(where('circleId', '==', currentChat.circleId));
       } else {
-        baseQueryConstraints.push(where('participants', 'array-contains', user.uid));
+        baseQueryConstraints.push(where('participants', 'array-contains', user!.uid));
       }
     }
 
@@ -413,6 +580,7 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
     return () => unsubscribeThread();
   }, [chatId, activeThread]);
 
+
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -427,6 +595,7 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
       const msgData: any = {
         chatId,
         senderId: user.uid,
+        senderName: profile?.displayName || 'Neighbor',
         text: messageText,
         type,
         createdAt: serverTimestamp(),
@@ -446,6 +615,21 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
         updatedAt: serverTimestamp(),
         unreadBy: chat?.participants.filter(p => p !== user?.uid) || []
       });
+
+      // Send notification if DIRECT chat
+      if (chat?.type === 'DIRECT') {
+        const recipientId = chat.participants.find(p => p !== user.uid);
+        if (recipientId) {
+          const displayMsg = type === 'POLL' ? 'Sent a poll' : 
+                             type === 'URGENT' ? `🚨 SOS: ${messageText}` : messageText;
+          sendNotification(
+            recipientId,
+            'new_message',
+            `${profile?.displayName || 'Neighbor'}: ${displayMsg}`,
+            `/chats/${chatId}`
+          );
+        }
+      }
     } catch (err) {
       console.error('Error sending message:', err);
     }
@@ -478,15 +662,33 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
     if (activeThread) {
       // Sending to thread
       try {
-        await addDoc(collection(db, 'chats', chatId, 'messages', activeThread.id, 'replies'), msgData);
-        
+        const docRef = await addDoc(collection(db, 'chats', chatId, 'messages', activeThread.id, 'replies'), msgData);
+
+        // Optimistic update: show the message immediately so the user doesn't
+        // have to close and re-open the thread if the snapshot is slow.
+        // The listener will overwrite this entry (same doc ID) when it fires.
+        setThreadMessages(prev => {
+          if (prev.some(m => m.id === docRef.id)) return prev;
+          return [...prev, { id: docRef.id, ...msgData, createdAt: { toMillis: () => Date.now() } as any }];
+        });
+
         // Update parent message replyCount
         await updateDoc(doc(db, 'chats', chatId, 'messages', activeThread.id), {
           replyCount: (activeThread.replyCount || 0) + 1
         });
-        
-        // No need to update lastMessage of chat for thread replies? 
-        // Slack usually does but let's keep it clean
+
+        // Send notification if DIRECT chat
+        if (chat?.type === 'DIRECT') {
+          const recipientId = chat.participants.find(p => p !== user?.uid);
+          if (recipientId) {
+            sendNotification(
+              recipientId,
+              'new_message',
+              `${profile?.displayName || 'Neighbor'} replied: ${messageText}`,
+              `/chats/${chatId}`
+            );
+          }
+        }
       } catch (err) {
         console.error('Error sending reply:', err);
       }
@@ -507,6 +709,19 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
           updatedAt: serverTimestamp(),
           unreadBy: chat?.participants.filter(p => p !== user?.uid) || []
         });
+
+        // Send notification if DIRECT chat
+        if (chat?.type === 'DIRECT') {
+          const recipientId = chat.participants.find(p => p !== user?.uid);
+          if (recipientId) {
+            sendNotification(
+              recipientId,
+              'new_message',
+              `${profile?.displayName || 'Neighbor'}: ${messageText}`,
+              `/chats/${chatId}`
+            );
+          }
+        }
       } catch (err) {
         console.error('Error sending message:', err);
       }
@@ -585,15 +800,52 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
     await sendMessage(`${profile.displayName || 'Neighbor'} is on it! Claimed this urgent need.`, 'SYSTEM');
   };
 
-  const quickMessages = [
-    "Is this still available?",
-    "How can I help with this?",
-    "I'd love to learn more!",
-    "Thank you for sharing!"
-  ];
+  const handleJoinCircle = async (circleId: string, circleName: string) => {
+    if (!user) return;
+    try {
+      await setDoc(doc(db, 'circles', circleId, 'members', user.uid), {
+        joinedAt: serverTimestamp()
+      });
+      
+      await updateDoc(doc(db, 'users', user.uid), {
+        joinedCircles: arrayUnion(circleId)
+      });
+
+      const circleRef = doc(db, 'circles', circleId);
+      const circleSnap = await getDoc(circleRef);
+      if (circleSnap.exists()) {
+        await updateDoc(circleRef, {
+          memberCount: (circleSnap.data().memberCount || 0) + 1
+        });
+      }
+
+      const systemMessageText = `${profile?.displayName || 'Neighbor'} joined the circle "${circleName}"!`;
+      await addDoc(collection(db, 'chats', chatId, 'messages'), {
+        chatId,
+        senderId: 'system',
+        senderName: 'System',
+        text: systemMessageText,
+        type: 'SYSTEM',
+        createdAt: serverTimestamp(),
+        chatType: chat?.type || 'DIRECT',
+        participants: chat?.participants || [],
+        circleId: chat?.circleId || null
+      });
+
+      await updateDoc(doc(db, 'chats', chatId), {
+        lastMessage: systemMessageText,
+        updatedAt: serverTimestamp(),
+        unreadBy: chat?.participants.filter(p => p !== user?.uid) || []
+      });
+
+    } catch (err) {
+      console.error('Error joining circle from chat invite:', err);
+    }
+  };
+
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-stone-50/50">
+    <div className="relative flex-1 flex flex-col overflow-hidden bg-stone-50/50">
       {/* Context Header */}
       {item && (
         <div className="bg-white border-b border-stone-100 p-4 shadow-sm z-10">
@@ -603,9 +855,7 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
                 {item.images?.[0] ? (
                   <img referrerPolicy="no-referrer" src={item.images[0]} alt="" className="w-full h-full object-cover" />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center text-stone-300">
-                    <Package size={20} />
-                  </div>
+                  <img src={getFallbackImage(item.category)} alt="" className="w-full h-full object-cover" />
                 )}
               </div>
               <div>
@@ -635,6 +885,25 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
                 <span>Confirm Handover</span>
               </button>
             )}
+
+            {item.status === 'COMPLETED' && otherUser && (
+              gratitudeSent ? (
+                <button 
+                  disabled
+                  className="flex items-center gap-2 px-4 py-2.5 bg-stone-100 text-stone-400 rounded-xl text-[10px] font-black uppercase tracking-widest cursor-not-allowed border border-stone-200"
+                >
+                  <span>Gratitude Sent 💚</span>
+                </button>
+              ) : (
+                <button 
+                  onClick={() => setShowGratitudeFlow(true)}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-stone-900 text-white hover:bg-stone-800 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-md transition-all active:scale-95"
+                >
+                  <Heart size={14} className="text-emerald-500" fill="currentColor" />
+                  <span>Say Thanks</span>
+                </button>
+              )
+            )}
           </div>
         </div>
       )}
@@ -662,7 +931,7 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
                       </div>
                     ))}
                   </div>
-                  <span className="text-[9px] font-black uppercase tracking-widest text-[--color-brand]">
+                  <span className="text-[9px] font-black uppercase tracking-widest text-brand">
                     In Common: {commonCircles.map(c => c.name).join(', ')}
                   </span>
                 </div>
@@ -679,38 +948,7 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
         </div>
       )}
 
-      {chat?.type === 'CHANNEL' && (
-        <div className="bg-stone-900 text-white px-6 py-4 flex items-center justify-between shadow-md">
-          <div className="flex items-center gap-3">
-            <button 
-              onClick={() => activeThread ? setActiveThread(null) : null}
-              className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${
-                activeThread ? 'bg-amber-400 text-stone-900' : 'bg-stone-800 text-stone-400'
-              }`}
-            >
-              {activeThread ? <X size={16} /> : <span className="font-black text-sm">#</span>}
-            </button>
-            <div>
-              <h2 className="text-xs font-black uppercase tracking-widest leading-none">
-                {activeThread ? 'Thread in ' : ''}{chat.channelName}
-              </h2>
-              {activeThread && (
-                <span className="text-[8px] font-bold text-stone-500 uppercase tracking-widest mt-1 block">
-                  Focused Conversation
-                </span>
-              )}
-            </div>
-          </div>
-          {onAction && !activeThread && (
-            <button 
-              onClick={() => {}}
-              className="text-[9px] font-black uppercase tracking-widest text-stone-500"
-            >
-              Channel
-            </button>
-          )}
-        </div>
-      )}
+      {/* Channel Header Removed */}
 
       {chat?.channelName === '#UrgentNeeds' && messages.filter(m => m.type === 'URGENT' && m.metadata?.status === 'PENDING').length > 0 && (
         <div className="bg-amber-50 border-b border-amber-100 px-6 py-2 flex items-center justify-between">
@@ -724,20 +962,32 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
         </div>
       )}
 
+      {/* Thread navigation bar — shown whenever a thread is open */}
+      {activeThread && (
+        <div className="flex items-center gap-3 px-4 py-3 bg-white border-b border-stone-100 shadow-sm z-10 flex-none">
+          <button
+            onClick={() => setActiveThread(null)}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 transition-all active:scale-95"
+            aria-label="Back to chat"
+          >
+            <ArrowLeft size={16} />
+            <span className="text-[11px] font-black uppercase tracking-widest">Back</span>
+          </button>
+          <div className="flex flex-col">
+            <span className="text-[10px] font-black uppercase tracking-widest text-stone-400">Thread</span>
+            <span className="text-xs font-semibold text-stone-700 line-clamp-1">
+              {activeThread.text}
+            </span>
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={scrollRef}>
         {activeThread && (
-          <div className="mb-8 p-4 bg-white rounded-[2rem] border-2 border-stone-100 shadow-sm">
-            <div className="flex justify-between items-center mb-3">
-              <span className="text-[10px] font-black uppercase tracking-widest text-stone-400 flex items-center gap-2">
-                <Smile size={12} /> Root Message
-              </span>
-              <button 
-                onClick={() => setActiveThread(null)}
-                className="text-[8px] font-black uppercase tracking-widest text-stone-400 hover:text-stone-900"
-              >
-                Close
-              </button>
-            </div>
+          <div className="mb-6 p-4 bg-stone-50 rounded-[2rem] border border-stone-100">
+            <span className="text-[9px] font-black uppercase tracking-widest text-stone-400 flex items-center gap-1 mb-3">
+              <MessageSquare size={10} /> Root message
+            </span>
             <ChatMessage 
               msg={activeThread} 
               isOwn={activeThread.senderId === user?.uid} 
@@ -745,13 +995,15 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
               onVote={handleVote}
               onClaim={handleClaim}
               onReply={setReplyingTo}
+              displayName={activeThread.senderName || userCache[activeThread.senderId] || (activeThread.senderId === user?.uid ? (profile?.displayName || 'You') : 'Neighbor')}
+              onJoinCircle={handleJoinCircle}
             />
-            <div className="mt-8 mb-4 flex items-center gap-4">
-              <div className="h-[1px] flex-1 bg-stone-100" />
-              <span className="text-[10px] font-black uppercase tracking-widest text-stone-300">
+            <div className="mt-6 mb-2 flex items-center gap-4">
+              <div className="h-[1px] flex-1 bg-stone-200" />
+              <span className="text-[10px] font-black uppercase tracking-widest text-stone-400">
                 {threadMessages.length} {threadMessages.length === 1 ? 'Response' : 'Responses'}
               </span>
-              <div className="h-[1px] flex-1 bg-stone-100" />
+              <div className="h-[1px] flex-1 bg-stone-200" />
             </div>
           </div>
         )}
@@ -766,6 +1018,8 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
             onClaim={handleClaim}
             onReply={setReplyingTo}
             onOpenThread={activeThread ? undefined : setActiveThread}
+            displayName={msg.senderName || userCache[msg.senderId] || (msg.senderId === user?.uid ? (profile?.displayName || 'You') : 'Neighbor')}
+            onJoinCircle={handleJoinCircle}
           />
         ))}
         {(activeThread ? threadMessages : messages).length === 0 && (
@@ -846,7 +1100,7 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
               ))}
               <button 
                 onClick={() => setPollOptions(prev => [...prev, ''])}
-                className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-[--color-brand] px-2 py-1"
+                className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-brand px-2 py-1"
               >
                 <Plus size={12} />
                 Add Option
@@ -863,59 +1117,63 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
         )}
       </AnimatePresence>
 
-      {!showPollCreator && (
-        <div className="px-4 pb-4 pt-3 flex gap-2 overflow-x-auto no-scrollbar border-t border-stone-100 bg-white">
-          {chat?.type === 'CHANNEL' && !activeThread && (
-            <>
-              <button
-                onClick={() => onAction?.('ASK')}
-                className="flex-shrink-0 flex items-center gap-2 px-4 py-2 bg-stone-900 text-white rounded-full text-[10px] font-black uppercase tracking-widest shadow-md hover:bg-black transition-all"
+
+
+      {/* Emoji Picker Popover */}
+      <AnimatePresence>
+        {showEmojiPicker && (
+          <motion.div
+            ref={emojiPickerRef}
+            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.95 }}
+            transition={{ duration: 0.15, ease: 'easeOut' }}
+            className="absolute bottom-[76px] left-4 bg-[#FDFBF4] border border-[#D9D0C0] rounded-3xl p-4 shadow-xl z-20 w-72"
+          >
+            {/* Triangular arrow indicator pointing to Smile button */}
+            <div className="absolute -bottom-2 left-[22px] w-4 h-4 bg-[#FDFBF4] border-r border-b border-[#D9D0C0] rotate-45" />
+            
+            <div className="text-[10px] font-black uppercase tracking-widest text-stone-400 mb-2 px-1 flex justify-between items-center relative z-10">
+              <span>Neighborly Emojis</span>
+              <button 
+                type="button" 
+                onClick={() => setShowEmojiPicker(false)}
+                className="text-stone-400 hover:text-stone-600 transition-colors"
               >
-                <Plus size={12} className="text-amber-400" />
-                <span>Ask for Need</span>
+                <X size={12} />
               </button>
-              <button
-                onClick={() => onAction?.('SHARE')}
-                className="flex-shrink-0 flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-full text-[10px] font-black uppercase tracking-widest shadow-md hover:bg-emerald-700 transition-all"
-              >
-                <Package size={12} />
-                <span>Give Away</span>
-              </button>
-              <button
-                onClick={() => setShowPollCreator(true)}
-                className="flex-shrink-0 flex items-center gap-2 px-4 py-2 bg-amber-400 text-stone-900 rounded-full text-[10px] font-black uppercase tracking-widest shadow-md hover:bg-amber-500 transition-all"
-              >
-                <BarChart2 size={12} />
-                <span>Create Poll</span>
-              </button>
-            </>
-          )}
-          {activeThread && (
-            <div className="flex items-center gap-2 px-4 py-2 bg-stone-100 text-stone-500 rounded-full text-[10px] font-black uppercase tracking-widest italic">
-              <MessageSquare size={12} />
-              <span>Replying to thread</span>
             </div>
-          )}
-          {!activeThread && quickMessages.map((msg, i) => (
-            <button
-              key={i}
-              onClick={() => sendMessage(msg)}
-              className="flex-shrink-0 px-4 py-2 bg-white border border-stone-100 rounded-full text-[10px] font-bold text-stone-500 hover:border-stone-900 hover:text-stone-900 transition-all shadow-sm whitespace-nowrap"
-            >
-              {msg}
-            </button>
-          ))}
-        </div>
-      )}
+            <div className="grid grid-cols-6 gap-2 relative z-10">
+              {EMOJIS.map((emoji) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  onClick={() => insertEmoji(emoji)}
+                  className="w-10 h-10 flex items-center justify-center text-xl rounded-xl hover:bg-stone-100/50 active:scale-90 transition-all"
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <form 
         onSubmit={handleSend}
-        className="p-4 bg-white border-t border-stone-100 flex items-center gap-2"
+        className="p-4 bg-white border-t border-stone-100 flex items-center gap-2 relative z-10"
       >
-        <button type="button" className="text-stone-500 p-2 hover:text-stone-700 transition-colors">
+        <button 
+          ref={smileButtonRef}
+          type="button" 
+          onClick={() => setShowEmojiPicker(prev => !prev)}
+          className={`p-2 transition-colors rounded-full ${showEmojiPicker ? 'text-[#a29b8c] bg-stone-100' : 'text-stone-500 hover:text-stone-700'}`}
+          aria-label="Choose emoji"
+        >
           <Smile size={20} />
         </button>
         <input 
+          ref={inputRef}
           type="text" 
           placeholder="Type a message..."
           value={text}
@@ -934,6 +1192,22 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
           <Send size={18} />
         </button>
       </form>
+
+      {showGratitudeFlow && otherUser && item && (
+        <GratitudeFlow
+          recipientId={otherUser.uid}
+          recipientName={otherUser.displayName || 'Neighbor'}
+          recipientPhoto={otherUser.photoURL}
+          itemId={item.id}
+          itemTitle={item.title}
+          itemType={item.type}
+          onClose={() => setShowGratitudeFlow(false)}
+          onComplete={() => {
+            setShowGratitudeFlow(false);
+            setGratitudeSent(true);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -25,6 +25,7 @@ export interface GraphNode {
   degree: number;        // Distance from YOU (0 = self, 1 = direct friend, etc.)
   isOrganization: boolean;
   visibilityPreference: string;
+  neighborhoodCenter?: { lat: number; lng: number };
 }
 
 /**
@@ -42,6 +43,30 @@ export interface TrustGraphData {
   links: GraphLink[];
   lineageIds: Set<string>; // A list of IDs that belong to your direct "Family Tree"
 }
+
+// Helper to normalize coordinates (handles standard object and Firestore GeoPoint structures)
+const safeCoords = (loc: any): { lat: number; lng: number } | undefined => {
+  if (!loc) return undefined;
+  
+  // If it's standard { lat, lng }
+  if (typeof loc.lat === 'number' && typeof loc.lng === 'number' && !isNaN(loc.lat) && !isNaN(loc.lng)) {
+    return { lat: loc.lat, lng: loc.lng };
+  }
+  
+  // If it's a Firestore GeoPoint or similar object with latitude/longitude
+  if (typeof loc.latitude === 'number' && typeof loc.longitude === 'number' && !isNaN(loc.latitude) && !isNaN(loc.longitude)) {
+    return { lat: loc.latitude, lng: loc.longitude };
+  }
+
+  // Fallback try parsing strings
+  const latVal = parseFloat(loc.lat ?? loc.latitude);
+  const lngVal = parseFloat(loc.lng ?? loc.longitude);
+  if (!isNaN(latVal) && !isNaN(lngVal)) {
+    return { lat: latVal, lng: lngVal };
+  }
+  
+  return undefined;
+};
 
 // ─── Hook ────────────────────────────────────────────────────
 
@@ -86,6 +111,8 @@ export function useTrustNetwork(maxDegree: number = 4) {
         hostId?: string;
         isOrganization?: boolean;
         visibilityPreference?: string;
+        neighborhoodCenter?: { lat: number; lng: number };
+        location?: { lat: number; lng: number };
       }>();
 
       usersSnap.forEach(doc => {
@@ -96,6 +123,8 @@ export function useTrustNetwork(maxDegree: number = 4) {
           hostId: d.hostId,
           isOrganization: d.isOrganization || false,
           visibilityPreference: d.visibilityPreference || 'PUBLIC',
+          neighborhoodCenter: safeCoords(d.neighborhoodCenter),
+          location: safeCoords(d.location),
         });
       });
 
@@ -169,6 +198,7 @@ export function useTrustNetwork(maxDegree: number = 4) {
           degree,
           isOrganization: profile.isOrganization || false,
           visibilityPreference: profile.visibilityPreference || 'PUBLIC',
+          neighborhoodCenter: profile.neighborhoodCenter || profile.location,
         });
       }
 
@@ -258,6 +288,7 @@ export function useTrustNetwork(maxDegree: number = 4) {
               degree: 0, 
               isOrganization: profile.isOrganization || false,
               visibilityPreference: profile.visibilityPreference || 'PUBLIC',
+              neighborhoodCenter: profile.neighborhoodCenter || profile.location,
             });
             if (profile.hostId && lineageIds.has(profile.hostId)) {
                const key = [lid, profile.hostId].sort().join('::');

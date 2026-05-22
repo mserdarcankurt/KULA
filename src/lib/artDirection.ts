@@ -34,6 +34,8 @@ export const ART_DIRECTION = {
     Support: "https://images.unsplash.com/photo-1488521787991-ed7bbaae773c?q=80&w=1000&auto=format&fit=crop", // Helping hands
     Furniture: "https://images.unsplash.com/photo-1538688525198-9b88f6f53126?q=80&w=1000&auto=format&fit=crop", // Chair
     Clothing: "https://images.unsplash.com/photo-1523381294911-8d3cead13475?q=80&w=1000&auto=format&fit=crop", // Vintage clothes
+    Digital: "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?q=80&w=1000&auto=format&fit=crop", // Digital & Software (collaborative screen sharing on a wooden desk)
+    "Q&A": "https://images.unsplash.com/photo-1515378791036-0648a3ef77b2?q=80&w=1000&auto=format&fit=crop", // Q&A & Advice (window-lit laptop workspace with a warm/golden tone)
     CircleInvite: "/Circle_invite.png", // Warm conceptual team/hands, placeholder since generation is out of quota
     Default: "https://images.unsplash.com/photo-1529156069898-49953e39b3ac?q=80&w=1000&auto=format&fit=crop" // Community fallback
   },
@@ -64,6 +66,17 @@ export const ART_DIRECTION = {
       // Return a unique URL for that specific user (the seed ensures it stays the same for them)
       return `https://api.dicebear.com/7.x/${style}/svg?seed=${encodeURIComponent(seed)}`;
     }
+  },
+
+  /**
+   * CENTRALIZED BUTTON PALETTE:
+   * Consistently styled buttons that fit the Berlin Analog aesthetic.
+   */
+  buttons: {
+    primary: "bg-[#5B6B56] hover:bg-[#4E5D4A] text-white transition-all duration-200 active:scale-95",
+    secondary: "bg-[#F3F1EB] hover:bg-[#EADFC9] text-stone-750 border border-[#D9D0C0]/60 transition-all duration-200 active:scale-95",
+    destructive: "bg-[#C86A51] hover:bg-[#B55A42] text-white transition-all duration-200 active:scale-95 shadow-md",
+    dark: "bg-stone-900 hover:bg-stone-800 text-white transition-all duration-200 active:scale-95",
   },
 
   /**

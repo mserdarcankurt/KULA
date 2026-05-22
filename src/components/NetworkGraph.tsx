@@ -48,7 +48,10 @@ import { useTrustNetwork, GraphNode, GraphLink } from '../hooks/useTrustNetwork'
 import { useAuth } from '../hooks/useAuth';
 import PublicProfile from './PublicProfile';
 import LineageTree from './LineageTree';
-import { Loader2, RotateCcw, Maximize, Search, X, Users, GitBranch } from 'lucide-react';
+import { Loader2, RotateCcw, Maximize, Search, X, Users, GitBranch, MapPin } from 'lucide-react';
+import { Map, AdvancedMarker, useMap } from '@vis.gl/react-google-maps';
+
+const API_KEY = (import.meta.env.VITE_GOOGLE_MAPS_PLATFORM_KEY as string) || '';
 
 // ─── Color palette (art direction: warm, earthy, analog) ─────
 
@@ -65,28 +68,188 @@ const LINK_COLORS = {
   VOUCH: 'rgba(5, 150, 105, 0.35)',    // soft emerald — peer trust
 };
 
+// ─── Error Boundary ──────────────────────────────────────────
+
+const MapErrorFallback = () => (
+  <div className="w-full h-full flex flex-col items-center justify-center p-8 text-center bg-stone-50 rounded-[3rem] border border-stone-200">
+    <MapPin size={48} className="text-stone-300 mb-4" />
+    <h3 className="serif text-xl font-bold text-stone-900 mb-2">Map Rendering Error</h3>
+    <p className="text-stone-400 text-sm max-w-[240px]">
+      Something went wrong while rendering the trust constellation map.
+    </p>
+  </div>
+);
+
+class MapErrorBoundary extends React.Component<
+  { children: React.ReactNode; fallback: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error("Map rendering error captured by boundary:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback;
+    }
+    return this.props.children;
+  }
+}
+
+// ─── Polyline Overlay for Google Maps ────────────────────────
+
+interface PolylineProps {
+  path: { lat: number; lng: number }[];
+  strokeColor?: string;
+  strokeOpacity?: number;
+  strokeWeight?: number;
+  dashed?: boolean;
+}
+
+function MapPolyline({
+  path,
+  strokeColor = '#000000',
+  strokeOpacity = 1.0,
+  strokeWeight = 2,
+  dashed = false
+}: PolylineProps) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!map || !(window as any).google || !(window as any).google.maps) return;
+
+    const polyline = new (window as any).google.maps.Polyline({
+      path,
+      strokeColor,
+      strokeOpacity,
+      strokeWeight,
+      icons: dashed ? [{
+        icon: {
+          path: 'M 0,-1 0,1',
+          strokeOpacity: 1,
+          scale: 2
+        },
+        offset: '0',
+        repeat: '10px'
+      }] : [],
+    });
+
+    polyline.setMap(map);
+
+    return () => {
+      polyline.setMap(null);
+    };
+  }, [map, path, strokeColor, strokeOpacity, strokeWeight, dashed]);
+
+  return null;
+}
+
+// ─── Map Controller for Reactive Pan/Zoom/Fit ───────────────
+
+interface MapControllerProps {
+  center: { lat: number; lng: number };
+  zoom: number;
+  fitBoundsTrigger: number;
+  nodes: GraphNode[];
+}
+
+function MapController({
+  center,
+  zoom,
+  fitBoundsTrigger,
+  nodes,
+}: MapControllerProps) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (map) {
+      map.panTo(center);
+      map.setZoom(zoom);
+    }
+  }, [map, center, zoom]);
+
+  useEffect(() => {
+    if (!map || !(window as any).google || fitBoundsTrigger === 0) return;
+
+    const bounds = new (window as any).google.maps.LatLngBounds();
+    let hasCoords = false;
+
+    nodes.forEach(n => {
+      if (n.neighborhoodCenter && 
+          typeof n.neighborhoodCenter.lat === 'number' && 
+          typeof n.neighborhoodCenter.lng === 'number' &&
+          !isNaN(n.neighborhoodCenter.lat) && 
+          !isNaN(n.neighborhoodCenter.lng)) {
+        bounds.extend(n.neighborhoodCenter);
+        hasCoords = true;
+      }
+    });
+
+    if (hasCoords) {
+      map.fitBounds(bounds);
+    }
+  }, [map, fitBoundsTrigger, nodes]);
+
+  return null;
+}
+
 // ─── Component ───────────────────────────────────────────────
 
 interface NetworkGraphProps {
   onClose?: () => void;
+  trustFilter?: number;
+  onNavigateToChat?: (chatId: string) => void;
 }
 
-export default function NetworkGraph({ onClose }: NetworkGraphProps) {
+export default function NetworkGraph({ onClose, trustFilter = 6, onNavigateToChat }: NetworkGraphProps) {
   const { user } = useAuth();
   const { data, loading, error, refresh } = useTrustNetwork(4);
-  const graphRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({ width: 400, height: 600 });
+  
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
-  const [imageCache] = useState(new Map<string, HTMLImageElement>());
   const [viewMode, setViewMode] = useState<'COMMUNITY' | 'LINEAGE'>('COMMUNITY');
+
+  // Map state
+  const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number }>({ lat: 52.5200, lng: 13.4050 });
+  const [mapZoom, setMapZoom] = useState<number>(12);
+  const [fitBoundsTrigger, setFitBoundsTrigger] = useState<number>(0);
 
   // Filter data based on view mode (Lineage only shows vertical invites within +2/-3 generations)
   const graphData = React.useMemo(() => {
-    if (viewMode === 'COMMUNITY') return data;
+    let baseNodes = data.nodes;
+    let baseLinks = data.links;
+
+    if (viewMode === 'COMMUNITY') {
+      if (trustFilter < 6) {
+        baseNodes = data.nodes.filter(n => n.degree <= trustFilter);
+      }
+
+      const nodeIds = new Set(baseNodes.map(n => n.id));
+      baseLinks = data.links.filter(l => {
+        const sourceId = typeof l.source === 'object' ? (l.source as any).id : l.source;
+        const targetId = typeof l.target === 'object' ? (l.target as any).id : l.target;
+        return nodeIds.has(sourceId) && nodeIds.has(targetId);
+      });
+
+      return {
+        nodes: baseNodes,
+        links: baseLinks,
+        lineageIds: data.lineageIds
+      };
+    }
+
     if (!data.lineageIds) return { nodes: [], links: [], lineageIds: new Set<string>() };
     
     return {
@@ -98,225 +261,47 @@ export default function NetworkGraph({ onClose }: NetworkGraphProps) {
       }),
       lineageIds: data.lineageIds
     };
-  }, [data, viewMode]);
+  }, [data, viewMode, trustFilter]);
 
-  // Track container size
+  // Set map center to user's home location once loaded
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-
-    const observer = new ResizeObserver(entries => {
-      for (const entry of entries) {
-        setDimensions({
-          width: entry.contentRect.width,
-          height: entry.contentRect.height,
-        });
+    if (!loading && data.nodes.length > 0 && user) {
+      const selfNode = data.nodes.find(n => n.id === user.uid);
+      if (selfNode?.neighborhoodCenter) {
+        setMapCenter(selfNode.neighborhoodCenter);
       }
-    });
-
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
-  // Center on the user node after data loads and tune physics
-  useEffect(() => {
-    if (!loading && data.nodes.length > 0 && graphRef.current && viewMode === 'COMMUNITY') {
-      // Tune physics to spread nodes out and reduce clutter
-      graphRef.current.d3Force('charge').strength(-300);
-      graphRef.current.d3Force('charge').distanceMax(800); // reset for community
-      graphRef.current.d3Force('link').distance(50);
-
-      // Small delay to let the physics settle
-      setTimeout(() => {
-        if (graphRef.current) {
-          const selfNode = data.nodes.find(n => n.id === user?.uid);
-          if (selfNode) {
-            graphRef.current.centerAt((selfNode as any).x, (selfNode as any).y, 1000);
-            graphRef.current.zoom(2.2, 1000);
-          }
-        }
-      }, 1500);
     }
-  }, [loading, data.nodes.length, user?.uid, viewMode]);
-
-  // Preload avatar images
-  useEffect(() => {
-    data.nodes.forEach(node => {
-      if (node.photo && !imageCache.has(node.id)) {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.src = node.photo;
-        img.onload = () => imageCache.set(node.id, img);
-      }
-    });
-  }, [data.nodes, imageCache]);
-
-  // ─── Canvas draw for each node ─────────────────────────────
-
-  const drawNode = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
-    const gNode = node as GraphNode;
-    const colors = DEGREE_COLORS[gNode.degree] || DEGREE_COLORS[4];
-    const isSelf = gNode.id === user?.uid;
-    const isHovered = hoveredNode === gNode.id;
-    const isNeighborOfHovered = hoveredNode && graphData.links.some(
-      (l: any) => (l.source?.id === hoveredNode && l.target?.id === gNode.id) ||
-                  (l.target?.id === hoveredNode && l.source?.id === gNode.id)
-    );
-    const isDimmed = hoveredNode !== null && !isHovered && !isNeighborOfHovered && gNode.id !== user?.uid;
-
-    // Make nodes generally larger so they are visible from a distance
-    const baseRadius = isSelf ? 16 : gNode.degree === 1 ? 13 : gNode.degree === 2 ? 11 : 9;
-    const radius = isHovered ? baseRadius * 1.3 : baseRadius;
-
-    ctx.save();
-
-    if (isDimmed) {
-      ctx.globalAlpha = 0.15;
-    }
-
-    // Outer glow
-    if (isHovered || isSelf) {
-      ctx.beginPath();
-      ctx.arc(node.x, node.y, radius + 4, 0, 2 * Math.PI);
-      ctx.fillStyle = colors.glow;
-      ctx.fill();
-    }
-
-    // Border ring
-    ctx.beginPath();
-    ctx.arc(node.x, node.y, radius + 1.5, 0, 2 * Math.PI);
-    ctx.fillStyle = colors.border;
-    ctx.fill();
-
-    // Inner circle (clip for avatar)
-    ctx.beginPath();
-    ctx.arc(node.x, node.y, radius, 0, 2 * Math.PI);
-    ctx.fillStyle = '#f5f5f4'; // stone-100 base
-    ctx.fill();
-
-    // Avatar image
-    const cachedImg = imageCache.get(gNode.id);
-    if (cachedImg && cachedImg.complete && cachedImg.naturalWidth > 0) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(node.x, node.y, radius, 0, 2 * Math.PI);
-      ctx.clip();
-      ctx.drawImage(cachedImg, node.x - radius, node.y - radius, radius * 2, radius * 2);
-      ctx.restore();
-    } else {
-      // Fallback: first letter
-      const fontSize = radius * 0.9;
-      ctx.font = `bold ${fontSize}px Inter, sans-serif`;
-      ctx.fillStyle = colors.fill;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(gNode.name.charAt(0).toUpperCase(), node.x, node.y + 0.5);
-    }
-
-    // Label (only show for Self, Hovered, or Neighbors of Hovered to reduce clutter)
-    const showLabel = isSelf || isHovered || isNeighborOfHovered || globalScale > 2.5;
-
-    if (showLabel) {
-      const label = isSelf ? 'You' : gNode.name.split(' ')[0];
-      const labelSize = Math.max(3.5, 12 / globalScale); // slightly larger text
-      ctx.font = `bold ${labelSize}px Inter, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
-
-      // Label background
-      const textWidth = ctx.measureText(label).width;
-      const padding = 3 / globalScale;
-      ctx.fillStyle = 'rgba(255,255,255,0.85)';
-      ctx.beginPath();
-      const rx = node.x - textWidth / 2 - padding;
-      const ry = node.y + radius + 3;
-      const rw = textWidth + padding * 2;
-      const rh = labelSize + padding * 2;
-      const cornerRadius = 2 / globalScale;
-      ctx.roundRect(rx, ry, rw, rh, cornerRadius);
-      ctx.fill();
-
-      ctx.fillStyle = isSelf ? '#3d3d29' : '#57534e';
-      ctx.fillText(label, node.x, node.y + radius + 3 + padding);
-    }
-
-    ctx.restore();
-  }, [user?.uid, hoveredNode, graphData.links, imageCache, viewMode]);
-
-  // ─── Link rendering ────────────────────────────────────────
-
-  const drawLink = useCallback((link: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
-    const gLink = link as GraphLink & { source: any; target: any };
-    const isVouch = gLink.type === 'VOUCH';
-    const source = gLink.source;
-    const target = gLink.target;
-
-    const isHighlighted = hoveredNode &&
-      (source.id === hoveredNode || target.id === hoveredNode);
-
-    ctx.save();
-
-    if (hoveredNode && !isHighlighted) {
-      ctx.globalAlpha = 0.06;
-    }
-
-    ctx.beginPath();
-    ctx.moveTo(source.x, source.y);
-    ctx.lineTo(target.x, target.y);
-
-    // Dynamic opacity: subtle by default, bold on hover
-    const opacity = isHighlighted ? 0.9 : 0.2;
-    ctx.strokeStyle = isVouch 
-      ? `rgba(5, 150, 105, ${opacity})` 
-      : `rgba(168, 162, 158, ${opacity + 0.1})`; // invites slightly darker than vouches
-      
-    ctx.lineWidth = isHighlighted ? 2.5 / globalScale : 1 / globalScale;
-
-    if (isVouch) {
-      ctx.setLineDash([4 / globalScale, 3 / globalScale]);
-    } else {
-      ctx.setLineDash([]);
-    }
-
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.restore();
-  }, [hoveredNode]);
+  }, [loading, data.nodes, user]);
 
   // ─── Interactions ──────────────────────────────────────────
 
-  const handleNodeClick = useCallback((node: any) => {
-    const gNode = node as GraphNode;
-    if (gNode.id !== user?.uid) {
-      setSelectedProfileId(gNode.id);
+  const handleNodeClick = useCallback((node: GraphNode) => {
+    if (node.id !== user?.uid) {
+      setSelectedProfileId(node.id);
     }
   }, [user?.uid]);
 
   const handleZoomToFit = useCallback(() => {
-    if (graphRef.current) {
-      graphRef.current.zoomToFit(600, 60);
-    }
+    setFitBoundsTrigger(prev => prev + 1);
   }, []);
 
   const handleRecenter = useCallback(() => {
-    if (graphRef.current && user) {
+    if (user) {
       const selfNode = data.nodes.find(n => n.id === user.uid);
-      if (selfNode) {
-        graphRef.current.centerAt((selfNode as any).x, (selfNode as any).y, 800);
-        graphRef.current.zoom(2.5, 800);
+      if (selfNode?.neighborhoodCenter) {
+        setMapCenter(selfNode.neighborhoodCenter);
+        setMapZoom(13);
       }
     }
   }, [user, data.nodes]);
 
   const handleSearchSelect = useCallback((nodeId: string) => {
-    if (graphRef.current) {
-      const node = data.nodes.find(n => n.id === nodeId);
-      if (node) {
-        graphRef.current.centerAt((node as any).x, (node as any).y, 800);
-        graphRef.current.zoom(3, 800);
-        setHoveredNode(nodeId);
-        setTimeout(() => setHoveredNode(null), 3000);
-      }
+    const node = data.nodes.find(n => n.id === nodeId);
+    if (node?.neighborhoodCenter) {
+      setMapCenter(node.neighborhoodCenter);
+      setMapZoom(14);
+      setHoveredNode(nodeId);
+      setTimeout(() => setHoveredNode(null), 3000);
     }
     setShowSearch(false);
     setSearchQuery('');
@@ -332,7 +317,7 @@ export default function NetworkGraph({ onClose }: NetworkGraphProps) {
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-stone-50">
+      <div className="w-full h-full flex flex-col items-center justify-center bg-stone-50">
         <div className="flex flex-col items-center gap-4">
           <Loader2 size={32} className="animate-spin text-stone-300" />
           <p className="text-stone-400 font-bold text-xs uppercase tracking-widest">
@@ -345,7 +330,7 @@ export default function NetworkGraph({ onClose }: NetworkGraphProps) {
 
   if (error || graphData.nodes.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-stone-50 p-8">
+      <div className="w-full h-full flex flex-col items-center justify-center bg-stone-50 p-8 text-center">
         <div className="text-center space-y-4">
           <p className="serif text-xl text-stone-600 font-bold">No connections yet</p>
           <p className="text-stone-400 text-sm">
@@ -364,8 +349,20 @@ export default function NetworkGraph({ onClose }: NetworkGraphProps) {
 
   // ─── Render ────────────────────────────────────────────────
 
+  if (!API_KEY) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-8 text-center bg-stone-50 rounded-[3rem] border-2 border-stone-100 border-dashed">
+        <MapPin size={48} className="text-stone-300 mb-4" />
+        <h3 className="serif text-xl font-bold text-stone-900 mb-2">Maps Unavailable</h3>
+        <p className="text-stone-400 text-sm max-w-[240px]">
+          Please configure the <code>VITE_GOOGLE_MAPS_PLATFORM_KEY</code> in settings to see your trust network on the map.
+        </p>
+      </div>
+    );
+  }
+
   return (
-    <div ref={containerRef} className="relative flex-1 bg-stone-50 overflow-hidden">
+    <div ref={containerRef} className="relative w-full h-full bg-stone-50 overflow-hidden">
       {/* Subtle film-grain overlay */}
       <div
         className="absolute inset-0 z-[1] pointer-events-none opacity-[0.03]"
@@ -374,35 +371,139 @@ export default function NetworkGraph({ onClose }: NetworkGraphProps) {
 
       {/* ── View Rendering ────────────────────────────────── */}
       {viewMode === 'LINEAGE' ? (
-        <LineageTree data={graphData} />
+        <LineageTree data={graphData} onNodeClick={(id) => setSelectedProfileId(id)} />
       ) : (
-        <>
-          {/* The graph canvas */}
-          <ForceGraph2D
-            ref={graphRef}
-            graphData={graphData}
-            width={dimensions.width}
-            height={dimensions.height}
-            backgroundColor="rgba(0,0,0,0)"
-            nodeCanvasObject={drawNode}
-            nodePointerAreaPaint={(node: any, color, ctx) => {
-              const gNode = node as GraphNode;
-              const r = gNode.degree === 0 ? 16 : gNode.degree === 1 ? 13 : 11;
-              ctx.fillStyle = color;
-              ctx.beginPath();
-              ctx.arc(node.x, node.y, r + 4, 0, 2 * Math.PI);
-              ctx.fill();
-            }}
-            linkCanvasObject={drawLink}
-            onNodeClick={handleNodeClick}
-            onNodeHover={(node: any) => setHoveredNode(node?.id || null)}
-            d3AlphaDecay={0.02}
-            d3VelocityDecay={0.3}
-            warmupTicks={80}
-            cooldownTicks={200}
-            enableZoomInteraction={true}
-            enablePanInteraction={true}
-          />
+        <div className="h-full w-full relative z-[2]">
+          <MapErrorBoundary fallback={<MapErrorFallback />}>
+            <Map
+              defaultCenter={mapCenter}
+              defaultZoom={mapZoom}
+              mapId="bf50a3734cf08349"
+              disableDefaultUI={true}
+              style={{ width: '100%', height: '100%' }}
+              internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
+            >
+              <MapController 
+                center={mapCenter} 
+                zoom={mapZoom} 
+                fitBoundsTrigger={fitBoundsTrigger} 
+                nodes={graphData.nodes} 
+              />
+
+              {/* Draw Links/Connections */}
+              {graphData.links.map((link, idx) => {
+                const sourceId = typeof link.source === 'object' ? (link.source as any).id : link.source;
+                const targetId = typeof link.target === 'object' ? (link.target as any).id : link.target;
+
+                const sourceNode = graphData.nodes.find(n => n.id === sourceId);
+                const targetNode = graphData.nodes.find(n => n.id === targetId);
+
+                if (!sourceNode?.neighborhoodCenter || !targetNode?.neighborhoodCenter ||
+                    typeof sourceNode.neighborhoodCenter.lat !== 'number' || typeof sourceNode.neighborhoodCenter.lng !== 'number' ||
+                    isNaN(sourceNode.neighborhoodCenter.lat) || isNaN(sourceNode.neighborhoodCenter.lng) ||
+                    typeof targetNode.neighborhoodCenter.lat !== 'number' || typeof targetNode.neighborhoodCenter.lng !== 'number' ||
+                    isNaN(targetNode.neighborhoodCenter.lat) || isNaN(targetNode.neighborhoodCenter.lng)) {
+                  return null;
+                }
+
+                const isHighlighted = hoveredNode &&
+                  (sourceId === hoveredNode || targetId === hoveredNode);
+
+                const isDimmed = hoveredNode !== null && !isHighlighted;
+
+                const path = [sourceNode.neighborhoodCenter, targetNode.neighborhoodCenter];
+                const opacity = isHighlighted ? 0.95 : (isDimmed ? 0.05 : 0.35);
+
+                return (
+                  <MapPolyline
+                    key={`link-${link.source}-${link.target}-${idx}`}
+                    path={path}
+                    strokeColor={link.type === 'VOUCH' ? '#059669' : '#78716c'}
+                    strokeOpacity={opacity}
+                    strokeWeight={isHighlighted ? 4 : 2}
+                    dashed={link.type === 'VOUCH'}
+                  />
+                );
+              })}
+
+              {/* Draw Nodes/Markers */}
+              {graphData.nodes.map(node => {
+                if (!node.neighborhoodCenter ||
+                    typeof node.neighborhoodCenter.lat !== 'number' || typeof node.neighborhoodCenter.lng !== 'number' ||
+                    isNaN(node.neighborhoodCenter.lat) || isNaN(node.neighborhoodCenter.lng)) {
+                  return null;
+                }
+
+                const colors = DEGREE_COLORS[node.degree] || DEGREE_COLORS[4];
+                const isSelf = node.id === user?.uid;
+                const isHovered = hoveredNode === node.id;
+                
+                const isNeighborOfHovered = hoveredNode && graphData.links.some(
+                  (l: any) => {
+                    const sId = typeof l.source === 'object' ? l.source.id : l.source;
+                    const tId = typeof l.target === 'object' ? l.target.id : l.target;
+                    return (sId === hoveredNode && tId === node.id) ||
+                           (tId === hoveredNode && sId === node.id);
+                  }
+                );
+                
+                const isDimmed = hoveredNode !== null && !isHovered && !isNeighborOfHovered && node.id !== user?.uid;
+                
+                const baseRadius = isSelf ? 20 : node.degree === 1 ? 16 : node.degree === 2 ? 14 : 12;
+
+                return (
+                  <AdvancedMarker
+                    key={node.id}
+                    position={node.neighborhoodCenter}
+                    onClick={() => handleNodeClick(node)}
+                  >
+                    <div
+                      onMouseEnter={() => setHoveredNode(node.id)}
+                      onMouseLeave={() => setHoveredNode(null)}
+                      className="relative flex items-center justify-center rounded-full transition-all cursor-pointer"
+                      style={{
+                        width: `${baseRadius * 2}px`,
+                        height: `${baseRadius * 2}px`,
+                        backgroundColor: '#f5f5f4',
+                        border: `3px solid ${colors.border}`,
+                        boxShadow: isHovered 
+                          ? `0 0 16px ${colors.glow}, 0 6px 10px rgba(0,0,0,0.15)` 
+                          : (isSelf ? `0 0 12px ${colors.glow}` : `0 4px 6px rgba(0,0,0,0.08)`),
+                        transform: isHovered ? 'scale(1.15)' : 'scale(1.0)',
+                        opacity: isDimmed ? 0.3 : 1.0,
+                        zIndex: isSelf ? 10 : (isHovered ? 20 : 5),
+                      }}
+                    >
+                      {node.photo ? (
+                        <img
+                          src={node.photo}
+                          alt={node.name}
+                          className="w-full h-full rounded-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <span
+                          className="font-bold text-stone-700 leading-none select-none"
+                          style={{
+                            fontSize: `${baseRadius * 0.9}px`,
+                          }}
+                        >
+                          {node.name.charAt(0).toUpperCase()}
+                        </span>
+                      )}
+
+                      {/* Label (always show for self or hovered/neighbor-of-hovered) */}
+                      {(isSelf || isHovered || isNeighborOfHovered) && (
+                        <div className="absolute top-full mt-1.5 bg-white/95 backdrop-blur-sm px-2 py-0.5 rounded-lg border border-stone-200/60 text-[9px] font-black tracking-wider uppercase text-stone-700 whitespace-nowrap shadow-md pointer-events-none z-30">
+                          {isSelf ? 'You' : node.name.split(' ')[0]}
+                        </div>
+                      )}
+                    </div>
+                  </AdvancedMarker>
+                );
+              })}
+            </Map>
+          </MapErrorBoundary>
 
           {/* ── Floating Controls (Community Mode Only) ────────── */}
           <div className="absolute bottom-6 right-4 z-10 flex flex-col gap-2">
@@ -453,7 +554,7 @@ export default function NetworkGraph({ onClose }: NetworkGraphProps) {
               </div>
             </div>
           </div>
-        </>
+        </div>
       )}
 
       {/* ── Common Floating Controls ──────────────────────── */}
@@ -467,7 +568,7 @@ export default function NetworkGraph({ onClose }: NetworkGraphProps) {
           }`}
         >
           <Users size={14} />
-          <span className="hidden sm:inline">Community</span>
+          <span>Community</span>
         </button>
         <button 
           onClick={() => setViewMode('LINEAGE')}
@@ -476,11 +577,9 @@ export default function NetworkGraph({ onClose }: NetworkGraphProps) {
           }`}
         >
           <GitBranch size={14} />
-          <span className="hidden sm:inline">Lineage</span>
+          <span>Lineage</span>
         </button>
       </div>
-
-
 
       {/* ── Search Overlay ────────────────────────────────── */}
       {showSearch && (
@@ -530,30 +629,16 @@ export default function NetworkGraph({ onClose }: NetworkGraphProps) {
         </div>
       )}
 
-      {/* ── Legend ─────────────────────────────────────────── */}
-      <div className="absolute bottom-6 left-4 z-10 bg-white/90 backdrop-blur-md rounded-2xl shadow-lg border border-stone-100 p-3 space-y-2">
-        <p className="text-[9px] font-black uppercase tracking-widest text-stone-400">Trust Links</p>
-        <div className="flex items-center gap-2">
-          <div className="w-6 h-[2px] bg-stone-400 rounded" />
-          <span className="text-[10px] text-stone-500 font-medium">Invite</span>
-        </div>
-        {viewMode === 'COMMUNITY' && (
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-[2px] border-t-2 border-dashed border-emerald-400 rounded" />
-            <span className="text-[10px] text-stone-500 font-medium">Vouch</span>
-          </div>
-        )}
-      </div>
-
-
-
       {/* ── Profile Sheet ─────────────────────────────────── */}
       {selectedProfileId && (
         <PublicProfile
           userId={selectedProfileId}
           onClose={() => setSelectedProfileId(null)}
+          onNavigateToChat={onNavigateToChat}
         />
       )}
     </div>
   );
 }
+
+

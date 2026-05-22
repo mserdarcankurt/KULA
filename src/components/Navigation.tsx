@@ -36,62 +36,73 @@
  *   interactive onboarding walkthrough.
  */
 import React from 'react';
-import { Home, Compass, PlusCircle, MessageSquare, User, ShieldCheck, Users, Shield } from 'lucide-react';
+import { Home, PlusCircle, User, ShieldCheck, Users, Map } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { useUnreadCount } from '../hooks/useUnreadCount';
 
 interface NavigationProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   isAdmin?: boolean;
+  showCommunityDrawer: boolean;
+  setShowCommunityDrawer: (show: boolean) => void;
 }
 
-export default function Navigation({ activeTab, setActiveTab, isAdmin }: NavigationProps) {
-  // Read the unread chat count from the live Firestore listener
-  // This updates in real-time when messages arrive
-  const { unreadChats } = useUnreadCount();
+export default function Navigation({ 
+  activeTab, 
+  setActiveTab, 
+  isAdmin, 
+  showCommunityDrawer, 
+  setShowCommunityDrawer 
+}: NavigationProps) {
   
   // Define the tab configuration. Each tab maps to a component in App.tsx.
   const tabs = [
     { id: 'home', icon: Home, label: 'Home' },
+    { id: 'community', icon: Map, label: 'Community' },
     { id: 'circles', icon: Users, label: 'Circles' },
-    { id: 'organizations', icon: Shield, label: 'Orgs' },
     { id: 'post', icon: PlusCircle, label: 'Post' },
-    { id: 'chats', icon: MessageSquare, label: 'Chats', badge: unreadChats > 0 ? unreadChats : 0 },
     { id: 'profile', icon: User, label: 'Profile' },
   ];
 
-  // Conditionally insert the Admin tab before Chats (index 4)
-  // splice(4, 0, ...) means "at position 4, remove 0 items, insert this"
+  // Conditionally insert the Admin tab before Profile (index 4)
   if (isAdmin) {
     tabs.splice(4, 0, { id: 'admin', icon: ShieldCheck, label: 'Admin' });
   }
 
   return (
     // sticky bottom-0 z-50 keeps this bar fixed at the bottom above all content
-    <nav className="h-16 pb-safe bg-white border-t border-stone-100 flex items-center justify-around px-2 sticky bottom-0 z-50">
-      {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          id={`tour-${tab.id}-tab`}  // Used by TourGuide.tsx for tooltip targeting
-          onClick={() => setActiveTab(tab.id)}
-          className={cn(
-            "relative flex flex-col items-center justify-center gap-1 transition-all duration-200",
-            // Active tab gets the brand color and scales up slightly
-            activeTab === tab.id ? "text-[--color-brand] scale-110" : "text-stone-500 hover:text-stone-700"
-          )}
-        >
-          {/* Icon scales based on active state for visual feedback */}
-          <tab.icon size={activeTab === tab.id ? 24 : 20} strokeWidth={activeTab === tab.id ? 2.5 : 2} />
-          <span className="text-[10px] font-medium uppercase tracking-wider">{tab.label}</span>
-          {/* Red unread badge — only shown on the Chats tab when count > 0 */}
-          {tab.badge ? (
-            <span className="absolute top-[-4px] right-[2px] bg-red-500 text-white min-w-[16px] h-[16px] flex items-center justify-center rounded-full text-[9px] font-bold px-1 border-2 border-white">
-              {tab.badge}
-            </span>
-          ) : null}
-        </button>
-      ))}
+    <nav className="h-16 pb-safe bg-white border-t border-stone-100 flex items-center justify-around px-2 sticky bottom-0 z-55 shadow-[0_-2px_10px_rgba(0,0,0,0.02)]">
+      {tabs.map((tab) => {
+        // Community is active when the drawer is open.
+        // Other tabs are active when activeTab matches and the drawer is closed.
+        const isActive = tab.id === 'community' 
+          ? showCommunityDrawer 
+          : (activeTab === tab.id && !showCommunityDrawer);
+
+        return (
+          <button
+            key={tab.id}
+            id={`tour-${tab.id}-tab`}  // Used by TourGuide.tsx for tooltip targeting
+            onClick={() => {
+              if (tab.id === 'community') {
+                setShowCommunityDrawer(!showCommunityDrawer);
+              } else {
+                setActiveTab(tab.id);
+                setShowCommunityDrawer(false);
+              }
+            }}
+            className={cn(
+              "relative flex flex-col items-center justify-center gap-1 transition-all duration-200",
+              // Active tab gets the brand color and scales up slightly
+              isActive ? "text-brand scale-110 font-bold" : "text-stone-500 hover:text-stone-700"
+            )}
+          >
+            {/* Icon scales based on active state for visual feedback */}
+            <tab.icon size={isActive ? 24 : 20} strokeWidth={isActive ? 2.5 : 2} />
+            <span className="text-[10px] font-medium uppercase tracking-wider">{tab.label}</span>
+          </button>
+        );
+      })}
     </nav>
   );
 }

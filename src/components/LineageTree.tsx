@@ -44,9 +44,10 @@ interface TreeNodeData {
 
 interface LineageTreeProps {
   data: TrustGraphData;
+  onNodeClick?: (userId: string) => void;
 }
 
-export default function LineageTree({ data }: LineageTreeProps) {
+export default function LineageTree({ data, onNodeClick }: LineageTreeProps) {
   const { user } = useAuth();
   const contentRef = useRef<HTMLDivElement>(null);
   const [svgPaths, setSvgPaths] = useState<{ id: string; d: string }[]>([]);
@@ -145,6 +146,32 @@ export default function LineageTree({ data }: LineageTreeProps) {
     };
   }, [data, treeRoots]);
 
+  // ─── Center on User Node ─────────────────────────────────────
+  useLayoutEffect(() => {
+    if (!user || !contentRef.current) return;
+    
+    const timeout = setTimeout(() => {
+      const userNodeEl = document.getElementById(`lineage-node-${user.uid}`);
+      const scrollContainer = contentRef.current?.parentElement;
+      
+      if (userNodeEl && scrollContainer) {
+        const containerRect = scrollContainer.getBoundingClientRect();
+        const nodeRect = userNodeEl.getBoundingClientRect();
+        
+        const scrollTop = scrollContainer.scrollTop + (nodeRect.top - containerRect.top) - (containerRect.height / 2) + (nodeRect.height / 2);
+        const scrollLeft = scrollContainer.scrollLeft + (nodeRect.left - containerRect.left) - (containerRect.width / 2) + (nodeRect.width / 2);
+        
+        scrollContainer.scrollTo({
+          top: scrollTop,
+          left: scrollLeft,
+          behavior: 'smooth'
+        });
+      }
+    }, 150);
+    
+    return () => clearTimeout(timeout);
+  }, [user, treeRoots]);
+
   if (!treeRoots.length) return null;
 
   return (
@@ -178,7 +205,7 @@ export default function LineageTree({ data }: LineageTreeProps) {
         {/* The DOM Tree */}
         <div className="relative z-10 flex justify-center w-full">
           {treeRoots.map(root => (
-            <TreeNode key={root.node.id} treeNode={root} currentUserId={user?.uid} />
+            <TreeNode key={root.node.id} treeNode={root} currentUserId={user?.uid} onNodeClick={onNodeClick} />
           ))}
         </div>
       </div>
@@ -191,9 +218,10 @@ export default function LineageTree({ data }: LineageTreeProps) {
 interface TreeNodeProps {
   treeNode: TreeNodeData;
   currentUserId?: string;
+  onNodeClick?: (userId: string) => void;
 }
 
-function TreeNode({ treeNode, currentUserId }: TreeNodeProps) {
+function TreeNode({ treeNode, currentUserId, onNodeClick }: TreeNodeProps) {
   const { node, children, depth } = treeNode;
   const isSelf = node.id === currentUserId;
 
@@ -213,6 +241,11 @@ function TreeNode({ treeNode, currentUserId }: TreeNodeProps) {
       <div 
         id={`lineage-node-${node.id}`} 
         className="flex flex-col items-center group cursor-pointer relative z-10 transition-transform hover:scale-105"
+        onClick={() => {
+          if (!isSelf && onNodeClick) {
+            onNodeClick(node.id);
+          }
+        }}
       >
         <div 
           className="rounded-full flex items-center justify-center bg-stone-50 transition-shadow duration-300"
@@ -248,7 +281,7 @@ function TreeNode({ treeNode, currentUserId }: TreeNodeProps) {
       {children.length > 0 && (
         <div className="mt-16 flex justify-center gap-6 sm:gap-10 md:gap-16 lg:gap-24">
           {children.map(child => (
-            <TreeNode key={child.node.id} treeNode={child} currentUserId={currentUserId} />
+            <TreeNode key={child.node.id} treeNode={child} currentUserId={currentUserId} onNodeClick={onNodeClick} />
           ))}
         </div>
       )}

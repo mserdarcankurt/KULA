@@ -2,35 +2,26 @@
  * FILE: TrustMosaic.tsx
  * ROLE IN KULA: The "Community Passport" — a visual dashboard of a user's participation.
  * 
- * CIRCUIT: This is the READ SIDE of the Trust Engine.
- *   GratitudeFlow.tsx WRITES to trustMosaic (increments counters).
- *   This component READS those counters and renders them as a visual dashboard.
+ * [ALPHA] Simplified for closed alpha:
+ *   - Growth Stage levels (Seedling → Elder) REMOVED
+ *   - Replaced with clear per-type counters: "X asks, Y shares, Z joins completed"
+ *   - Gratitude Wall retained intact
  * 
- * GROWTH STAGE ALGORITHM:
- *   getGrowthStage() maps raw numbers to metaphorical labels:
- *     - SEEDLING: 0 completed exchanges (just joined)
- *     - SPROUT: 1-4 exchanges (getting started)
- *     - TREE: 5-14 exchanges + 1 İmece participation (active contributor)
- *     - OLD_GROWTH: 15+ exchanges + 3 İmece + 2 vouches (community pillar)
- *     - ELDER: 30+ exchanges + 5 İmece (long-standing leader)
- *   Each stage has a color, icon, and description that maps to the Berlin Analog aesthetic.
- * 
- * SECTIONS:
- *   1. Growth Stage Banner — the metaphorical title (Seedling → Elder)
- *   2. Stats Bento Grid — 3 tiles showing Exchanges, İmece, and Circle counts
- *   3. Member Since — timestamp from UserProfile.createdAt
- *   4. Gratitude Wall — live feed of thank-you notes from other users
- *      (Subscribes to `gratitude_notes WHERE toUserId == this user`, ordered by recency)
+ * DATA SOURCE:
+ *   - mosaic.completedExchanges — incremented by GratitudeFlow.tsx on any exchange
+ *   - mosaic.completedAsks / completedShares / completedJoins — per-type counters
+ *     (new fields, will be 0 for old users until they complete exchanges)
+ *   - mosaic.circleCount — circles the user belongs to
  * 
  * USED BY:
  *   - Profile.tsx — shows YOUR trust mosaic on your own profile
  *   - PublicProfile.tsx — shows SOMEONE ELSE's trust mosaic (compact mode)
  */
 import React, { useState, useEffect } from 'react';
-import { TrustMosaic as TrustMosaicType, GratitudeNote, GrowthStage } from '../types';
+import { TrustMosaic as TrustMosaicType, GratitudeNote } from '../types';
 import { db } from '../lib/firebase';
 import { collection, query, where, orderBy, onSnapshot, limit } from 'firebase/firestore';
-import { Sprout, TreePine, Trees, Home, Handshake, Users, Heart, Calendar, ChevronDown } from 'lucide-react';
+import { Handshake, Users, Calendar, ChevronDown, Package, MessageSquare, Heart } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 interface TrustMosaicProps {
@@ -40,67 +31,10 @@ interface TrustMosaicProps {
   compact?: boolean; // For PublicProfile (slightly smaller layout)
 }
 
-function getGrowthStage(mosaic?: TrustMosaicType): GrowthStage {
-  if (!mosaic || mosaic.completedExchanges === 0) return 'SEEDLING';
-  if (mosaic.completedExchanges < 5) return 'SPROUT';
-  if (mosaic.completedExchanges < 15 && mosaic.imeceParticipations >= 1) return 'TREE';
-  if (mosaic.completedExchanges >= 15 && mosaic.imeceParticipations >= 3 && mosaic.vouchCount >= 2) return 'OLD_GROWTH';
-  if (mosaic.completedExchanges >= 30 && mosaic.imeceParticipations >= 5) return 'ELDER';
-  // Fallback: if they have lots of exchanges but not enough imece, still give TREE
-  if (mosaic.completedExchanges >= 5) return 'TREE';
-  return 'SPROUT';
-}
-
-const stageConfig: Record<GrowthStage, { label: string; icon: React.ReactNode; color: string; bg: string; border: string; description: string }> = {
-  SEEDLING: {
-    label: 'Seedling',
-    icon: <Sprout size={24} />,
-    color: 'text-lime-600',
-    bg: 'bg-lime-50',
-    border: 'border-lime-100',
-    description: 'Just planted in the neighborhood'
-  },
-  SPROUT: {
-    label: 'Sprout',
-    icon: <Sprout size={24} />,
-    color: 'text-emerald-600',
-    bg: 'bg-emerald-50',
-    border: 'border-emerald-100',
-    description: 'Growing roots in the community'
-  },
-  TREE: {
-    label: 'Tree',
-    icon: <TreePine size={24} />,
-    color: 'text-green-700',
-    bg: 'bg-green-50',
-    border: 'border-green-100',
-    description: 'A reliable presence in the Kiez'
-  },
-  OLD_GROWTH: {
-    label: 'Old Growth',
-    icon: <Trees size={24} />,
-    color: 'text-teal-700',
-    bg: 'bg-teal-50',
-    border: 'border-teal-100',
-    description: 'Deep roots, trusted by many'
-  },
-  ELDER: {
-    label: 'Neighborhood Elder',
-    icon: <Home size={24} />,
-    color: 'text-amber-700',
-    bg: 'bg-amber-50',
-    border: 'border-amber-100',
-    description: 'A pillar of the community'
-  }
-};
-
 export default function TrustMosaicComponent({ userId, mosaic, memberSince, compact }: TrustMosaicProps) {
   const [notes, setNotes] = useState<GratitudeNote[]>([]);
   const [showAllNotes, setShowAllNotes] = useState(false);
   const [loadingNotes, setLoadingNotes] = useState(true);
-
-  const stage = getGrowthStage(mosaic);
-  const config = stageConfig[stage];
 
   useEffect(() => {
     const q = query(
@@ -133,62 +67,88 @@ export default function TrustMosaicComponent({ userId, mosaic, memberSince, comp
     }
   };
 
+  // Per-type counts — use specific fields if available, otherwise split total evenly
+  // New: completedAsks, completedShares, completedJoins fields
+  // Legacy: fall back to completedExchanges total
+  const completedAsks = (mosaic as any)?.completedAsks ?? 0;
+  const completedShares = (mosaic as any)?.completedShares ?? 0;
+  const completedJoins = (mosaic as any)?.completedJoins ?? 0;
+  const totalExchanges = mosaic?.completedExchanges ?? 0;
+
+  const stats = [
+    {
+      icon: <MessageSquare size={compact ? 14 : 16} className="text-[#8B7E66]" />,
+      count: completedAsks,
+      label: completedAsks === 1 ? 'Ask' : 'Asks',
+      sublabel: 'completed',
+      color: 'bg-[#FAF7F0] border-[#E8E2D2]',
+    },
+    {
+      icon: <Package size={compact ? 14 : 16} className="text-[#3D5A40]" />,
+      count: completedShares,
+      label: completedShares === 1 ? 'Share' : 'Shares',
+      sublabel: 'completed',
+      color: 'bg-emerald-50/40 border-emerald-200/40',
+    },
+    {
+      icon: <Users size={compact ? 14 : 16} className="text-[#3F726A]" />,
+      count: completedJoins,
+      label: completedJoins === 1 ? 'Join' : 'Joins',
+      sublabel: 'completed',
+      color: 'bg-teal-50/40 border-teal-200/40',
+    },
+  ];
+
   return (
     <div className="space-y-4">
-      {/* Growth Stage Banner */}
-      <div className={`${config.bg} ${config.border} border rounded-[2rem] p-5 flex items-center gap-4`}>
-        <div className={`w-14 h-14 rounded-2xl ${config.bg} border ${config.border} flex items-center justify-center ${config.color} shadow-sm`}>
-          {config.icon}
+      {/* Simple stats — what matters is what you've done, not a label */}
+      <div className={`grid grid-cols-3 gap-${compact ? '2' : '3'}`}>
+        {stats.map((stat) => (
+          <div
+            key={stat.label}
+            className={`${stat.color} border rounded-2xl ${compact ? 'p-3' : 'p-4'} flex flex-col items-center text-center gap-1.5 hover:shadow-sm transition-all`}
+          >
+            {stat.icon}
+            <span className={`${compact ? 'text-lg' : 'text-2xl'} font-black text-stone-800 leading-none`}>
+              {stat.count}
+            </span>
+            <div className="flex flex-col leading-none">
+              <span className="text-[8px] font-black uppercase tracking-widest text-[#7A6D55]">
+                {stat.label}
+              </span>
+              <span className="text-[7px] font-bold text-stone-400 uppercase tracking-wide">
+                {stat.sublabel}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Total exchanges (if any exist but per-type is all zeros, show total as fallback) */}
+      {totalExchanges > 0 && (completedAsks + completedShares + completedJoins === 0) && (
+        <div className="flex items-center justify-center gap-2 bg-[#FAF7F0] border border-[#E8E2D2] rounded-2xl p-3 shadow-sm">
+          <Handshake size={14} className="text-emerald-600" />
+          <span className="text-sm font-black text-[#5B6B56]">{totalExchanges}</span>
+          <span className="text-[10px] font-bold uppercase tracking-widest text-[#7A6D55]">exchanges completed</span>
         </div>
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <span className={`text-sm font-black uppercase tracking-widest ${config.color}`}>
-              {config.label}
+      )}
+
+      {/* Circles & Member Since */}
+      <div className="flex items-center justify-between px-1">
+        {mosaic?.circleCount !== undefined && mosaic.circleCount > 0 && (
+          <div className="flex items-center gap-1.5">
+            <Users size={12} className="text-indigo-400" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-stone-500">
+              {mosaic.circleCount} {mosaic.circleCount === 1 ? 'circle' : 'circles'}
             </span>
           </div>
-          <p className="text-[11px] text-stone-500 mt-0.5 leading-snug">{config.description}</p>
-        </div>
-      </div>
-
-      {/* Stats Bento Grid */}
-      <div className="grid grid-cols-3 gap-3">
-        <div className="bg-white border border-stone-200 rounded-2xl p-4 text-center space-y-1 hover:shadow-sm transition-all">
-          <div className="flex items-center justify-center gap-1 text-stone-800">
-            <Handshake size={16} className="text-emerald-500" />
-            <span className="text-xl font-black">{mosaic?.completedExchanges || 0}</span>
-          </div>
-          <span className="text-[8px] font-black uppercase tracking-widest text-stone-400 leading-none block">
-            Exchanges
+        )}
+        <div className="flex items-center gap-1.5 ml-auto">
+          <Calendar size={12} className="text-stone-400" />
+          <span className="text-[10px] font-bold uppercase tracking-widest text-stone-400">
+            Neighbor for {formatMemberSince()}
           </span>
         </div>
-
-        <div className="bg-white border border-stone-200 rounded-2xl p-4 text-center space-y-1 hover:shadow-sm transition-all">
-          <div className="flex items-center justify-center gap-1 text-stone-800">
-            <Heart size={16} className="text-amber-500" />
-            <span className="text-xl font-black">{mosaic?.imeceParticipations || 0}</span>
-          </div>
-          <span className="text-[8px] font-black uppercase tracking-widest text-stone-400 leading-none block">
-            İmece
-          </span>
-        </div>
-
-        <div className="bg-white border border-stone-200 rounded-2xl p-4 text-center space-y-1 hover:shadow-sm transition-all">
-          <div className="flex items-center justify-center gap-1 text-stone-800">
-            <Users size={16} className="text-indigo-500" />
-            <span className="text-xl font-black">{mosaic?.circleCount || 0}</span>
-          </div>
-          <span className="text-[8px] font-black uppercase tracking-widest text-stone-400 leading-none block">
-            Circles
-          </span>
-        </div>
-      </div>
-
-      {/* Member Since */}
-      <div className="flex items-center justify-center gap-2 text-stone-400">
-        <Calendar size={12} />
-        <span className="text-[10px] font-bold uppercase tracking-widest">
-          Neighbor for {formatMemberSince()}
-        </span>
       </div>
 
       {/* Gratitude Wall */}

@@ -35,12 +35,37 @@ interface TrustNode {
   uid: string;
   name: string;
   hostId?: string;
+  hideAsConnector?: boolean;
+  visibilityPreference?: string;
+  neighborhoodVisibility?: string;
 }
 
 // In-memory cache of nodes fetched during this session.
 // This prevents re-fetching the same user profile multiple times
 // during a single BFS traversal.
 const nodeCache: Record<string, TrustNode> = {};
+const neighborsCache: Record<string, string[]> = {};
+const degreesCache: Record<string, { degrees: number | null; chain: TrustNode[]; via?: string }> = {};
+
+// In-memory cache of in-flight promises to prevent cache stampedes
+// when multiple concurrent requests are made for the same data.
+const nodePromises: Record<string, Promise<TrustNode | null>> = {};
+const neighborsPromises: Record<string, Promise<string[]>> = {};
+const degreesPromises: Record<string, Promise<{ degrees: number | null; chain: TrustNode[]; via?: string }>> = {};
+
+/**
+ * clearTrustGraphCache():
+ * Clears all cached trust nodes, neighbor sets, and path distances.
+ * Call this when the trust graph changes (e.g. accepting a vouch, blocking a user).
+ */
+export function clearTrustGraphCache() {
+  for (const key in nodeCache) delete nodeCache[key];
+  for (const key in neighborsCache) delete neighborsCache[key];
+  for (const key in degreesCache) delete degreesCache[key];
+  for (const key in nodePromises) delete nodePromises[key];
+  for (const key in neighborsPromises) delete neighborsPromises[key];
+  for (const key in degreesPromises) delete degreesPromises[key];
+}
 
 /**
  * fetchNode():
@@ -49,21 +74,30 @@ const nodeCache: Record<string, TrustNode> = {};
  * 
  * CALLED BY: getDegreesOfSeparation() and fetchNeighbors() below.
  */
-async function fetchNode(uid: string): Promise<TrustNode | null> {
-  // Return from cache if we already fetched this user
-  if (nodeCache[uid]) return nodeCache[uid];
+function fetchNode(uid: string): Promise<TrustNode | null> {
+  if (nodePromises[uid]) return nodePromises[uid];
 
-  const snap = await getDoc(doc(db, 'users', uid));
-  if (!snap.exists()) return null;
+  nodePromises[uid] = (async () => {
+    // Return from cache if we already fetched this user
+    if (nodeCache[uid]) return nodeCache[uid];
 
-  const data = snap.data();
-  const node = {
-    uid,
-    name: data.displayName || 'Neighbor',
-    hostId: data.hostId
-  };
-  nodeCache[uid] = node;
-  return node;
+    const snap = await getDoc(doc(db, 'users', uid));
+    if (!snap.exists()) return null;
+
+    const data = snap.data();
+    const node: TrustNode = {
+      uid,
+      name: data.displayName || 'Neighbor',
+      hostId: data.hostId,
+      hideAsConnector: !!data.privacySettings?.hideAsConnector,
+      visibilityPreference: data.privacySettings?.profileVisibility || data.visibilityPreference || 'PUBLIC',
+      neighborhoodVisibility: data.privacySettings?.neighborhoodVisibility || 'PUBLIC'
+    };
+    nodeCache[uid] = node;
+    return node;
+  })();
+
+  return nodePromises[uid];
 }
 
 /**
@@ -80,36 +114,46 @@ async function fetchNode(uid: string): Promise<TrustNode | null> {
  *   This function ALSO considers vouch edges, making it more complete
  *   but also more expensive (4 Firestore queries per node).
  */
-async function fetchNeighbors(uid: string): Promise<string[]> {
-  const neighbors = new Set<string>();
-  
-  try {
-    // 1. Parent: Who invited this user?
-    const node = await fetchNode(uid);
-    if (node?.hostId) {
-      neighbors.add(node.hostId);
+function fetchNeighbors(uid: string): Promise<string[]> {
+  if (neighborsPromises[uid]) return neighborsPromises[uid];
+
+  neighborsPromises[uid] = (async () => {
+    if (neighborsCache[uid]) return neighborsCache[uid];
+
+    const neighbors = new Set<string>();
+    
+    try {
+      // 1. Parent: Who invited this user?
+      const node = await fetchNode(uid);
+      if (node?.hostId) {
+        neighbors.add(node.hostId);
+      }
+
+      // 2. Children: Who did this user invite?
+      const childrenQuery = query(collection(db, 'users'), where('hostId', '==', uid));
+      const childrenSnap = await getDocs(childrenQuery);
+      childrenSnap.forEach(d => neighbors.add(d.id));
+
+      // 3. Vouches sent: Who did this user vouch for? (only accepted vouches count)
+      const sentQuery = query(collection(db, 'vouches'), where('fromUserId', '==', uid), where('status', '==', 'ACCEPTED'));
+      const sentSnap = await getDocs(sentQuery);
+      sentSnap.forEach(d => neighbors.add(d.data().toUserId));
+
+      // 4. Vouches received: Who vouched for this user?
+      const receivedQuery = query(collection(db, 'vouches'), where('toUserId', '==', uid), where('status', '==', 'ACCEPTED'));
+      const receivedSnap = await getDocs(receivedQuery);
+      receivedSnap.forEach(d => neighbors.add(d.data().fromUserId));
+
+    } catch (error) {
+      console.error("Error fetching neighbors for", uid, error);
     }
 
-    // 2. Children: Who did this user invite?
-    const childrenQuery = query(collection(db, 'users'), where('hostId', '==', uid));
-    const childrenSnap = await getDocs(childrenQuery);
-    childrenSnap.forEach(d => neighbors.add(d.id));
+    const result = Array.from(neighbors);
+    neighborsCache[uid] = result;
+    return result;
+  })();
 
-    // 3. Vouches sent: Who did this user vouch for? (only accepted vouches count)
-    const sentQuery = query(collection(db, 'vouches'), where('fromUserId', '==', uid), where('status', '==', 'ACCEPTED'));
-    const sentSnap = await getDocs(sentQuery);
-    sentSnap.forEach(d => neighbors.add(d.data().toUserId));
-
-    // 4. Vouches received: Who vouched for this user?
-    const receivedQuery = query(collection(db, 'vouches'), where('toUserId', '==', uid), where('status', '==', 'ACCEPTED'));
-    const receivedSnap = await getDocs(receivedQuery);
-    receivedSnap.forEach(d => neighbors.add(d.data().fromUserId));
-
-  } catch (error) {
-    console.error("Error fetching neighbors for", uid, error);
-  }
-
-  return Array.from(neighbors);
+  return neighborsPromises[uid];
 }
 
 /**
@@ -137,55 +181,79 @@ async function fetchNeighbors(uid: string): Promise<string[]> {
  *   - chain: The full path of users from A to B
  *   - via: The name of the first intermediary (for "Connected via Bob" display)
  */
-export async function getDegreesOfSeparation(userAId: string, userBId: string, maxDepth: number = 4) {
-  // Same person = 0 degrees
-  if (userAId === userBId) return { degrees: 0, chain: [] };
+export function getDegreesOfSeparation(userAId: string, userBId: string, maxDepth: number = 4): Promise<{ degrees: number | null; chain: TrustNode[]; via?: string }> {
+  const cacheKey = `${userAId}-${userBId}-${maxDepth}`;
+  if (degreesPromises[cacheKey]) return degreesPromises[cacheKey];
 
-  // BFS queue stores: [currentUid, pathFromA]
-  const queue: [string, string[]][] = [[userAId, [userAId]]];
-  const visited = new Set<string>([userAId]);
+  degreesPromises[cacheKey] = (async () => {
+    if (degreesCache[cacheKey]) return degreesCache[cacheKey];
 
-  while (queue.length > 0) {
-    const [currentUid, path] = queue.shift()!;
-    const currentDepth = path.length - 1;
+    // Same person = 0 degrees
+    if (userAId === userBId) {
+      const res = { degrees: 0, chain: [] };
+      degreesCache[cacheKey] = res;
+      return res;
+    }
 
-    // Don't search deeper than maxDepth (default 4)
-    if (currentDepth >= maxDepth) continue;
+    // BFS queue stores: [currentUid, pathFromA]
+    const queue: [string, string[]][] = [[userAId, [userAId]]];
+    const visited = new Set<string>([userAId]);
 
-    // Expand: find all users connected to the current user
-    const neighbors = await fetchNeighbors(currentUid);
+    while (queue.length > 0) {
+      const [currentUid, path] = queue.shift()!;
+      const currentDepth = path.length - 1;
 
-    for (const neighborId of neighbors) {
-      if (neighborId === userBId) {
-        // PATH FOUND! Build the result with human-readable names.
-        const fullPathIds = [...path, neighborId];
-        const fullChain: TrustNode[] = [];
-        
-        // Resolve UIDs to names for display
-        for (const id of fullPathIds) {
-          const n = await fetchNode(id);
-          if (n) fullChain.push(n);
+      // Don't search deeper than maxDepth (default 4)
+      if (currentDepth >= maxDepth) continue;
+
+      // Expand: find all users connected to the current user
+      const neighbors = await fetchNeighbors(currentUid);
+
+      for (const neighborId of neighbors) {
+        if (neighborId === userBId) {
+          // PATH FOUND! Build the result with human-readable names.
+          const fullPathIds = [...path, neighborId];
+          const fullChain: TrustNode[] = [];
+          
+          // Resolve UIDs to names for display
+          for (let i = 0; i < fullPathIds.length; i++) {
+            const id = fullPathIds[i];
+            const n = await fetchNode(id);
+            if (n) {
+              const isIntermediate = i > 0 && i < fullPathIds.length - 1;
+              fullChain.push({
+                ...n,
+                name: (isIntermediate && n.hideAsConnector) ? 'Hidden' : n.name
+              });
+            }
+          }
+
+          const res = { 
+            degrees: currentDepth + 1, 
+            chain: fullChain,
+            // The "via" field — the first person in the chain after the start user.
+            // Used for display: "Connected via Bob" in ConnectionBadge.tsx
+            via: fullChain.length > 2 ? fullChain[1].name : undefined
+          };
+          degreesCache[cacheKey] = res;
+          return res;
         }
 
-        return { 
-          degrees: currentDepth + 1, 
-          chain: fullChain,
-          // The "via" field — the first person in the chain after the start user.
-          // Used for display: "Connected via Bob" in ConnectionBadge.tsx
-          via: fullChain.length > 2 ? fullChain[1].name : undefined
-        };
-      }
-
-      // Mark as visited to prevent cycles (A→B→A→B...)
-      if (!visited.has(neighborId)) {
-        visited.add(neighborId);
-        queue.push([neighborId, [...path, neighborId]]);
+        // Mark as visited to prevent cycles (A→B→A→B...)
+        if (!visited.has(neighborId)) {
+          visited.add(neighborId);
+          queue.push([neighborId, [...path, neighborId]]);
+        }
       }
     }
-  }
 
-  // No path found — these users are in separate trust islands
-  return { degrees: null, chain: [] };
+    // No path found — these users are in separate trust islands
+    const fallback = { degrees: null, chain: [] };
+    degreesCache[cacheKey] = fallback;
+    return fallback;
+  })();
+
+  return degreesPromises[cacheKey];
 }
 
 /**
@@ -222,8 +290,7 @@ export async function checkSymmetricVisibility(currentUid: string, currentPref: 
   const targetNode = await fetchNode(targetUid);
   if (!targetNode) return false;
 
-  const targetSnap = await getDoc(doc(db, 'users', targetUid));
-  const targetPref = targetSnap.exists() ? (targetSnap.data().visibilityPreference || 'PUBLIC') : 'PUBLIC';
+  const targetPref = targetNode.visibilityPreference || 'PUBLIC';
 
   // FAST PATH: If both users are PUBLIC, skip the expensive BFS
   if (currentPref === 'PUBLIC' && targetPref === 'PUBLIC') return true;
@@ -235,6 +302,7 @@ export async function checkSymmetricVisibility(currentUid: string, currentPref: 
   // Convert preference strings to maximum allowed distances
   const mapPrefToMaxDegree = (pref: string) => {
     switch (pref) {
+      case 'PRIVATE': return 0;    // Strictly private
       case 'DEGREE_1': return 1;   // Direct connections only
       case 'DEGREE_2': return 2;   // Friends of friends
       case 'DEGREE_3': return 3;   // Three hops
@@ -257,3 +325,70 @@ export async function checkSymmetricVisibility(currentUid: string, currentPref: 
   // This ensures neither user is "exposed" beyond their comfort level
   return degrees <= myMax && degrees <= theirMax;
 }
+
+/**
+ * checkItemVisibility():
+ * Checks if a given post/item is visible to the viewer based on both the owner's 
+ * profile privacy settings AND the item's own custom trust-graph reach constraint.
+ */
+export async function checkItemVisibility(viewerUid: string, viewerPref: string, item: any): Promise<boolean> {
+  if (viewerUid === item.ownerId) return true;
+
+  // 1. Check symmetric profile visibility first
+  const passesProfileVis = await checkSymmetricVisibility(viewerUid, viewerPref, item.ownerId);
+  if (!passesProfileVis) return false;
+
+  // 2. Check the post's own custom visibility reach
+  const reach = item.visibilityReach || 'PUBLIC';
+  if (reach === 'PUBLIC') return true;
+  if (reach === 'PRIVATE') return false; // Since viewerUid !== item.ownerId
+
+  const result = await getDegreesOfSeparation(viewerUid, item.ownerId, 4);
+  const degrees = result.degrees;
+  if (degrees === null) return false;
+
+  const mapReachToMaxDegree = (r: string) => {
+    switch (r) {
+      case 'DEGREE_1': return 1;
+      case 'DEGREE_2': return 2;
+      case 'DEGREE_3': return 3;
+      case 'DEGREE_4': return 4;
+      default: return Infinity;
+    }
+  };
+
+  return degrees <= mapReachToMaxDegree(reach);
+}
+
+/**
+ * checkNeighborhoodVisibility():
+ * Checks if a target user's neighborhood center/location should be visible to the viewer
+ * based on the target user's privacySettings.neighborhoodVisibility preference.
+ */
+export async function checkNeighborhoodVisibility(viewerUid: string, targetUid: string): Promise<boolean> {
+  if (viewerUid === targetUid) return true;
+
+  const targetNode = await fetchNode(targetUid);
+  if (!targetNode) return false;
+  
+  const pref = targetNode.neighborhoodVisibility || 'PUBLIC';
+  if (pref === 'PUBLIC') return true;
+  if (pref === 'PRIVATE') return false;
+
+  const result = await getDegreesOfSeparation(viewerUid, targetUid, 4);
+  const degrees = result.degrees;
+  if (degrees === null) return false;
+
+  const mapPrefToMaxDegree = (p: string) => {
+    switch (p) {
+      case 'DEGREE_1': return 1;
+      case 'DEGREE_2': return 2;
+      case 'DEGREE_3': return 3;
+      case 'DEGREE_4': return 4;
+      default: return Infinity;
+    }
+  };
+
+  return degrees <= mapPrefToMaxDegree(pref);
+}
+

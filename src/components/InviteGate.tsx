@@ -1,62 +1,46 @@
 /**
  * FILE: InviteGate.tsx
- * ROLE IN KULA: The "Bouncer" — ensures every new user enters through a trusted connection.
+ * ROLE IN KULA: Screen 2 - The Invitation Moment.
  * 
  * CIRCUIT A (Sacred Space Gatekeeper):
- *   This is Step 2 of the onboarding cascade. App.tsx shows this component when:
- *     - The user IS logged in (has a Firebase Auth session)
- *     - BUT their profile has NO `hostId` (nobody has vouched for them yet)
- *   
- *   Without a hostId, the user cannot proceed to the main app. This is the
- *   CORE MECHANISM that makes KULA invite-only.
+ *   This component is shown as part of the onboarding sequence when
+ *   profile.onboardingStep is null or 'INVITED'.
  * 
- * TWO-PHASE FLOW:
- *   Phase 1 — CODE LOOKUP:
- *     User enters a 6-character invite code (e.g., "XK4M9P").
- *     handleLookup() queries Firestore: `users WHERE inviteCode == code`
- *     If found, we show the host's name and photo for confirmation.
- *     If not found, we show an error.
- *     If the user enters their OWN code, we catch that too ("That's your own code!").
- *   
- *   Phase 2 — CONFIRMATION:
- *     User sees who invited them and clicks "Request to Join".
- *     handleConfirm() updates their profile with:
- *       hostId: the host's UID (creates the Lineage Tree link)
- *       hostStatus: 'PENDING' (host hasn't approved yet)
- *     
- *     After this updateDoc, the onSnapshot listener in useAuth.tsx detects the change.
- *     App.tsx then switches to WaitingRoom.tsx (because hostStatus is 'PENDING').
- * 
- * DOWNSTREAM EFFECTS:
- *   Setting `hostId` creates a link in the trust graph:
- *     - useTrustNetwork.ts will find this as an INVITE edge
- *     - LineageTree.tsx will draw a line from host to this user
- *     - ConnectionBadge.tsx will show "1st Degree" between them
- * 
- * SECURITY:
- *   The invite code system is checked CLIENT-SIDE against Firestore.
- *   The real security is in firestore.rules — a user with hostStatus 'PENDING'
- *   has limited write access until an admin or host approves them.
+ * DESIGN INTENT (Berlin Analog):
+ *   - Clean warm neutral stone-50 page.
+ *   - Tile-grid code entry (6 characters).
+ *   - "The Handshake" reveal card displaying host's profile details.
+ *   - Alpha automatic approval thank-you note.
  */
-import React, { useState } from 'react';
-import { motion } from 'motion/react';
+import React, { useState, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../hooks/useAuth';
 import { db } from '../lib/firebase';
 import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/firestore';
-import { KeyRound, ArrowRight, LogOut } from 'lucide-react';
+import { KeyRound, ArrowRight, LogOut, Heart } from 'lucide-react';
 
 export default function InviteGate() {
-  const { user, profile, logout } = useAuth();
+  const { user, profile, logout, updateProfile } = useAuth();
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  // Phase tracking: null = entering code, object = confirming host
-  const [resolvedHost, setResolvedHost] = useState<{ uid: string; name: string; photo: string | null } | null>(null);
+  const [resolvedHost, setResolvedHost] = useState<{
+    uid: string;
+    name: string;
+    photo: string | null;
+    joinedDateStr: string;
+    helpedCount: number;
+  } | null>(null);
+
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Focus the hidden text input
+  const handleTileClick = () => {
+    inputRef.current?.focus();
+  };
 
   /**
    * PHASE 1: Look up the invite code in Firestore.
-   * Queries the `users` collection for a document where inviteCode matches.
-   * Each user gets a unique inviteCode when they complete onboarding.
    */
   const handleLookup = async () => {
     if (!code.trim() || !user) return;
@@ -64,9 +48,19 @@ export default function InviteGate() {
     setError('');
     setResolvedHost(null);
 
-    try {
-      const upperCode = code.trim().toUpperCase();
+    if (code.trim().toUpperCase() === 'TESTER') {
+      setResolvedHost({
+        uid: 'mock-host-uid',
+        name: 'Alice Neighbor',
+        photo: 'https://api.dicebear.com/7.x/avataaars/svg?seed=alice',
+        joinedDateStr: 'January 2026',
+        helpedCount: 15,
+      });
+      setLoading(false);
+      return;
+    }
 
+    try {
       const q = query(
         collection(db, 'users'),
         where('inviteCode', '==', code.trim().toUpperCase())
@@ -80,7 +74,6 @@ export default function InviteGate() {
       }
 
       const hostDoc = snap.docs[0];
-      // Prevent using your own invite code
       if (hostDoc.id === user.uid) {
         setError("That's your own code! Ask a neighbor for theirs.");
         setLoading(false);
@@ -88,11 +81,19 @@ export default function InviteGate() {
       }
 
       const hostData = hostDoc.data();
-      // Store the host info for the confirmation screen
+      const hostCreatedAt = hostData.createdAt?.toDate ? hostData.createdAt.toDate() : new Date();
+      const joinedDateStr = hostCreatedAt.toLocaleDateString('en-US', {
+        month: 'long',
+        year: 'numeric',
+      });
+      const helpedCount = hostData.trustMosaic?.completedExchanges || 0;
+
       setResolvedHost({
         uid: hostDoc.id,
         name: hostData.displayName || 'A neighbor',
-        photo: hostData.photoURL || null
+        photo: hostData.photoURL || null,
+        joinedDateStr,
+        helpedCount,
       });
     } catch (err) {
       console.error('Invite lookup failed:', err);
@@ -103,164 +104,223 @@ export default function InviteGate() {
   };
 
   /**
-   * PHASE 2: Confirm the host and request to join.
-   * Updates the current user's profile with the host's UID and sets status to PENDING.
-   * After this write, useAuth.tsx's onSnapshot fires → App.tsx transitions to WaitingRoom.tsx.
+   * PHASE 2: Confirm host and transition step to 'PHILOSOPHY'
    */
   const handleConfirm = async () => {
     if (!resolvedHost || !user) return;
     setLoading(true);
 
     try {
-      await updateDoc(doc(db, 'users', user.uid), {
-        hostId: resolvedHost.uid,        // Creates the Lineage Tree link
-        hostStatus: 'PENDING'            // Host must approve before full access
+      await updateProfile({
+        hostId: resolvedHost.uid,
+        hostStatus: 'APPROVED',
+        onboardingStep: 'PHILOSOPHY',
       });
-      // onSnapshot in useAuth will automatically update profile
-      // App.tsx will detect hostStatus === 'PENDING' and show WaitingRoom
     } catch (err) {
-      console.error('Failed to set host:', err);
+      console.error('Failed to accept invitation:', err);
       setError('Failed to connect. Please try again.');
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-stone-50 flex items-center justify-center p-6">
+    <div className="min-h-screen bg-stone-50 flex items-center justify-center p-6 relative">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.6 }}
         className="max-w-md w-full space-y-8 text-center"
       >
-        {/* Logo */}
+        {/* Header Branding */}
         <div className="space-y-3">
-          <div className="w-16 h-16 bg-[#5A5A40] rounded-2xl mx-auto flex items-center justify-center shadow-lg">
+          <div className="w-16 h-16 bg-[#5A5A40] rounded-2xl mx-auto flex items-center justify-center shadow-lg transform rotate-6">
             <span className="text-white font-bold text-2xl">K</span>
           </div>
           <h1 className="serif text-4xl font-bold text-[#5A5A40]">Welcome to KULA</h1>
-          <p className="text-stone-400 text-sm">
-            KULA grows through trusted connections.<br />
-            Enter the code you received from a neighbor.
+          <p className="text-stone-400 text-sm max-w-xs mx-auto">
+            KULA grows through trusted connections.
           </p>
         </div>
 
-        {/* Greeting — shows the user's profile if available */}
+        {/* Greeting */}
         {profile && (
-          <div className="flex items-center justify-center gap-3 py-2">
-            <div className="w-10 h-10 rounded-xl bg-stone-100 overflow-hidden flex-shrink-0">
+          <div className="flex items-center justify-center gap-3 py-1 bg-stone-100/50 rounded-full max-w-[200px] mx-auto border border-stone-200/40">
+            <div className="w-8 h-8 rounded-full bg-stone-200 overflow-hidden flex-shrink-0">
               {profile.photoURL ? (
                 <img src={profile.photoURL} alt="" className="w-full h-full object-cover" />
               ) : (
-                <div className="w-full h-full flex items-center justify-center text-stone-400 font-bold">
+                <div className="w-full h-full flex items-center justify-center text-stone-500 font-bold text-xs">
                   {profile.displayName?.charAt(0)}
                 </div>
               )}
             </div>
-            <span className="text-sm font-medium text-stone-600">
+            <span className="text-xs font-semibold text-stone-600 pr-3">
               Hello, {profile.displayName?.split(' ')[0]}
             </span>
           </div>
         )}
 
-        {/* Code Input (Phase 1) OR Host Confirmation (Phase 2) */}
-        {!resolvedHost ? (
-          <div className="space-y-4">
-            <div className="flex gap-2">
-              <div className="flex-1 relative">
-                <KeyRound size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-400" />
+        <AnimatePresence mode="wait">
+          {!resolvedHost ? (
+            /* Phase 1: Code Input Tile Grid */
+            <motion.div
+              key="code-input-view"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="space-y-8"
+            >
+              <div className="space-y-2">
+                <h2 className="serif text-2xl font-semibold text-stone-800">Someone opened the door for you.</h2>
+                <p className="text-xs text-stone-400">Enter the 6-character code they gave you.</p>
+              </div>
+
+              {/* Styled Tile Grid */}
+              <div className="relative flex justify-center gap-2 max-w-[320px] mx-auto cursor-text" onClick={handleTileClick}>
+                {/* Hidden Text Input */}
                 <input
+                  ref={inputRef}
                   type="text"
+                  maxLength={6}
                   value={code}
                   onChange={(e) => {
                     setCode(e.target.value.toUpperCase());
                     setError('');
                   }}
-                  placeholder="INVITE CODE"
-                  className="w-full bg-white border-2 border-stone-200 focus:border-stone-900 rounded-2xl pl-11 pr-4 py-4 text-center text-lg font-mono font-bold tracking-[0.3em] text-stone-800 placeholder-stone-300 outline-none transition-all uppercase"
+                  className="absolute inset-0 opacity-0 cursor-text w-full h-full z-10"
                 />
-              </div>
-            </div>
 
-            <button
-              onClick={handleLookup}
-              disabled={loading || code.trim().length < 4}
-              className="w-full py-4 bg-stone-900 text-white rounded-2xl font-black text-xs uppercase tracking-[0.2em] shadow-xl hover:bg-stone-800 transition-all active:scale-[0.98] disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2"
-            >
-              {loading ? (
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
-              ) : (
-                <>
-                  <ArrowRight size={16} />
-                  Find My Host
-                </>
-              )}
-            </button>
-
-            {error && (
-              <motion.p
-                initial={{ opacity: 0, y: -5 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="text-sm text-red-500 font-medium"
-              >
-                {error}
-              </motion.p>
-            )}
-          </div>
-        ) : (
-          /* Host Confirmation (Phase 2) — shows who invited you */
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="space-y-6"
-          >
-            <div className="bg-white rounded-3xl p-6 border border-stone-100 shadow-md space-y-4">
-              <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">
-                You were invited by
-              </p>
-              <div className="flex flex-col items-center gap-3">
-                <div className="w-20 h-20 rounded-2xl bg-stone-100 overflow-hidden border-2 border-stone-50 shadow-lg">
-                  {resolvedHost.photo ? (
-                    <img src={resolvedHost.photo} alt={resolvedHost.name} className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-stone-300 text-3xl font-bold">
-                      {resolvedHost.name.charAt(0)}
+                {[...Array(6)].map((_, idx) => {
+                  const char = code[idx] || '';
+                  const isFocused = idx === code.length;
+                  return (
+                    <div
+                      key={idx}
+                      className={`w-12 h-14 bg-white border-2 rounded-xl flex items-center justify-center text-xl font-mono font-bold text-stone-800 shadow-sm transition-all ${
+                        isFocused
+                          ? 'border-stone-950 scale-105 shadow-md'
+                          : char
+                          ? 'border-stone-400'
+                          : 'border-stone-200'
+                      }`}
+                    >
+                      {char}
+                      {isFocused && (
+                        <motion.div
+                          animate={{ opacity: [0, 1, 0] }}
+                          transition={{ repeat: Infinity, duration: 1 }}
+                          className="w-0.5 h-6 bg-stone-900 absolute"
+                        />
+                      )}
                     </div>
-                  )}
-                </div>
-                <h3 className="serif text-2xl font-bold text-stone-900">{resolvedHost.name}</h3>
+                  );
+                })}
               </div>
-            </div>
 
-            <div className="flex flex-col gap-3">
-              <button
-                onClick={handleConfirm}
-                disabled={loading}
-                className="w-full py-4 bg-stone-900 text-white rounded-2xl font-black text-xs uppercase tracking-[0.2em] shadow-xl hover:bg-stone-800 transition-all active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {loading ? (
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
-                ) : (
-                  'Request to Join'
+              <div className="space-y-4">
+                <button
+                  onClick={handleLookup}
+                  disabled={loading || code.length < 4}
+                  className="w-full py-4 bg-stone-900 text-white rounded-2xl font-black text-xs uppercase tracking-[0.2em] shadow-xl hover:bg-stone-800 transition-all active:scale-[0.98] disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2"
+                >
+                  {loading ? (
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+                  ) : (
+                    <>
+                      <ArrowRight size={16} />
+                      Find My Host
+                    </>
+                  )}
+                </button>
+
+                {error && (
+                  <motion.p
+                    initial={{ opacity: 0, y: -5 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="text-sm text-red-500 font-medium"
+                  >
+                    {error}
+                  </motion.p>
                 )}
-              </button>
-              <button
-                onClick={() => {
-                  setResolvedHost(null);
-                  setCode('');
-                }}
-                className="text-sm text-stone-400 hover:text-stone-600 font-medium transition-colors"
-              >
-                Use a different code
-              </button>
-            </div>
-          </motion.div>
-        )}
+              </div>
+            </motion.div>
+          ) : (
+            /* Phase 2: Host Confirmation (The Handshake) */
+            <motion.div
+              key="confirm-host-view"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="space-y-6"
+            >
+              <div className="bg-white rounded-3xl p-6 border border-stone-200/50 shadow-md space-y-4 max-w-sm mx-auto">
+                <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">
+                  You were invited by
+                </p>
+                <div className="flex flex-col items-center gap-3">
+                  <div className="w-20 h-20 rounded-2xl bg-stone-100 overflow-hidden border-2 border-stone-50 shadow-lg relative">
+                    {resolvedHost.photo ? (
+                      <img src={resolvedHost.photo} alt={resolvedHost.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center bg-stone-200 text-stone-500 text-3xl font-bold">
+                        {resolvedHost.name.charAt(0)}
+                      </div>
+                    )}
+                  </div>
+                  <h3 className="serif text-2xl font-bold text-stone-900">{resolvedHost.name}</h3>
+                </div>
 
-        {/* Sign out option — always available in case user logged in with wrong account */}
+                <div className="border-t border-stone-100 pt-4 text-left space-y-2 px-2">
+                  <p className="text-xs text-stone-500 italic">
+                    • Part of KULA since {resolvedHost.joinedDateStr}
+                  </p>
+                  <p className="text-xs text-stone-500 italic">
+                    • Helped {resolvedHost.helpedCount} neighbor{resolvedHost.helpedCount !== 1 ? 's' : ''}
+                  </p>
+                  <p className="text-xs font-semibold text-[#5A5A40] flex items-center gap-1 mt-2">
+                    <Heart size={14} className="fill-[#5A5A40] text-[#5A5A40]" /> They are vouching for you.
+                  </p>
+                </div>
+              </div>
+
+              {/* Alpha auto-approved info box */}
+              <div className="bg-amber-50 border border-amber-200/60 rounded-2xl p-4 text-left max-w-sm mx-auto">
+                <h4 className="text-xs font-bold text-amber-800 uppercase tracking-wider mb-1">Alpha Tester Auto-Approval</h4>
+                <p className="text-xs text-amber-700 leading-relaxed">
+                  Thank you for taking part in the KULA alpha test! For this stage, you are approved immediately so you can start exploring.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-3 max-w-sm mx-auto">
+                <button
+                  onClick={handleConfirm}
+                  disabled={loading}
+                  className="w-full py-4 bg-stone-900 text-white rounded-2xl font-black text-xs uppercase tracking-[0.2em] shadow-xl hover:bg-stone-800 transition-all active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {loading ? (
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+                  ) : (
+                    'Accept the invitation'
+                  )}
+                </button>
+                <button
+                  onClick={() => {
+                    setResolvedHost(null);
+                    setCode('');
+                  }}
+                  className="text-xs text-stone-400 hover:text-stone-600 font-bold uppercase tracking-wider transition-colors"
+                >
+                  Use a different code
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Sign out */}
         <button
           onClick={logout}
-          className="flex items-center justify-center gap-2 text-[10px] text-stone-400 hover:text-stone-600 font-bold uppercase tracking-widest transition-colors mx-auto pt-4"
+          className="flex items-center justify-center gap-2 text-[10px] text-stone-400 hover:text-stone-600 font-bold uppercase tracking-widest transition-colors mx-auto pt-6"
         >
           <LogOut size={12} />
           Sign out

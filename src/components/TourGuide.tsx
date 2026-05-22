@@ -139,9 +139,10 @@ export default function TourGuide() {
     }
   ];
 
-  if (!profile?.hasCompletedOnboarding || profile?.hasCompletedInteractiveTour) {
-    return null;
-  }
+  // [ALPHA] Tours disabled for closed alpha — UI is cleaner without guided overlays.
+  // TODO: Re-enable tours post-launch with updated steps reflecting the new Feed-first UX.
+  return null;
+
 
   return (
     <Joyride

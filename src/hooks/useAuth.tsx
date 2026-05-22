@@ -7,7 +7,7 @@
  */
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged, User } from '../lib/firebase';
-import { doc, getDoc, setDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, onSnapshot, updateDoc } from 'firebase/firestore';
 import { UserProfile } from '../types';
 
 /**
@@ -23,6 +23,8 @@ interface AuthContextType {
   logout: () => Promise<void>;
   isGuardian: boolean;       // A special "Admin" mode for developers to bypass login
   enableGuardianMode: () => void;
+  enableTestUserMode: () => void;
+  updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
 }
 
 // Create the context container
@@ -39,6 +41,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [isGuardian, setIsGuardian] = useState(localStorage.getItem('kula-guardian-mode') === 'true');
+  const [isTestUser, setIsTestUser] = useState(localStorage.getItem('kula-test-user-mode') === 'true');
 
   /**
    * enableGuardianMode():
@@ -46,10 +49,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
    * It creates a mock profile so we can test the app without actually logging into Google.
    */
   const enableGuardianMode = () => {
+    localStorage.removeItem('kula-test-user-mode');
+    setIsTestUser(false);
     localStorage.setItem('kula-guardian-mode', 'true');
     setIsGuardian(true);
+    setUser({ uid: 'guardian-uid', displayName: 'Neighborhood Guardian' } as User);
     
-    // Create a mock guardian profile with pre-filled community status
     const mockProfile: UserProfile = {
       uid: 'guardian-uid',
       displayName: 'Neighborhood Guardian',
@@ -71,17 +76,59 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setLoading(false);
   };
 
+  /**
+   * enableTestUserMode():
+   * Cheat code for testing the onboarding flow end-to-end.
+   */
+  const enableTestUserMode = () => {
+    localStorage.removeItem('kula-guardian-mode');
+    setIsGuardian(false);
+    localStorage.setItem('kula-test-user-mode', 'true');
+    setIsTestUser(true);
+    setUser({ uid: 'test-user-uid', displayName: 'Test Neighbor' } as User);
+
+    const mockProfile: UserProfile = {
+      uid: 'test-user-uid',
+      displayName: 'Test Neighbor',
+      photoURL: 'https://api.dicebear.com/7.x/avataaars/svg?seed=test',
+      bio: '',
+      rating: 0,
+      reviewCount: 0,
+      createdAt: serverTimestamp(),
+      isAdmin: false,
+      defaultReach: ['VICINITY'],
+      joinedCircles: [],
+      hasCompletedOnboarding: false,
+      onboardingStep: null,
+      hostStatus: 'NONE',
+      inviteCode: 'TESTER'
+    };
+    setProfile(mockProfile);
+    setLoading(false);
+  };
+
+  const updateProfile = async (updates: Partial<UserProfile>) => {
+    if (isGuardian || isTestUser || profile?.uid === 'test-user-uid' || profile?.uid === 'guardian-uid') {
+      setProfile(prev => prev ? { ...prev, ...updates } : null);
+      return;
+    }
+    if (user) {
+      await updateDoc(doc(db, 'users', user.uid), updates);
+    }
+  };
+
   // Effect to handle dev-only tools
   useEffect(() => {
-    // We only expose 'enableGuardianMode' to the browser window during development.
     if (import.meta.env.DEV) {
       (window as any).enableGuardianMode = enableGuardianMode;
+      (window as any).enableTestUserMode = enableTestUserMode;
     }
-    // If the browser remembers we were in guardian mode, turn it back on.
     if (isGuardian && !profile) {
       enableGuardianMode();
+    } else if (isTestUser && !profile) {
+      enableTestUserMode();
     }
-  }, [isGuardian]);
+  }, [isGuardian, isTestUser]);
 
   /**
    * The Master Auth Listener:
@@ -98,9 +145,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (user) {
         // If a user exists, we look up their custom KULA profile in Firestore.
         const profileRef = doc(db, 'users', user.uid);
-        
-        // 'onSnapshot' is a "Live Link". If the user profile updates in the database, 
-        // this code runs again instantly, updating the UI.
+        const privateRef = doc(db, 'users_private', user.uid);
+
+        let publicData: UserProfile | null = null;
+        let privateData: any = null;
+
+        const mergeAndSetProfile = () => {
+          if (publicData) {
+            setProfile({
+              ...publicData,
+              exactHomeLocation: privateData?.exactHomeLocation || null,
+              savedLocations: privateData?.savedLocations || []
+            });
+            setLoading(false);
+          }
+        };
+
         const unsubProfile = onSnapshot(profileRef, async (profileSnap) => {
           if (!profileSnap.exists()) {
             /**
@@ -120,24 +180,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               defaultReach: ['VICINITY'],
               joinedCircles: [],
               hasCompletedOnboarding: false,
+              onboardingStep: null,       // Storied Journey: starts from the beginning
               hasCompletedInteractiveTour: false,
               // Generate a random 6-character invite code for them to share
               inviteCode: Math.random().toString(36).substr(2, 6).toUpperCase(),
               hostStatus: 'NONE'
             };
-            // Save the new profile to Firestore
+            const newPrivate = {
+              exactHomeLocation: null,
+              savedLocations: []
+            };
+            // Save the new profile and private document to Firestore
             await setDoc(profileRef, newProfile);
-            setProfile(newProfile);
+            await setDoc(privateRef, newPrivate);
+            publicData = newProfile;
+            privateData = newPrivate;
+            mergeAndSetProfile();
           } else {
             // If they already have a profile, just load it into state.
-            setProfile(profileSnap.data() as UserProfile);
+            publicData = profileSnap.data() as UserProfile;
+            mergeAndSetProfile();
           }
-          setLoading(false); // We are done loading!
         });
 
-        // Clean up the live link when the component is destroyed
+        const unsubPrivate = onSnapshot(privateRef, (privateSnap) => {
+          if (privateSnap.exists()) {
+            privateData = privateSnap.data();
+          } else {
+            privateData = { exactHomeLocation: null, savedLocations: [] };
+          }
+          mergeAndSetProfile();
+        });
+
+        // Clean up the live links when the component is destroyed
         return () => {
           unsubProfile();
+          unsubPrivate();
         };
       } else {
         // If no user is logged in, clear the profile and stop loading.
@@ -168,10 +246,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
    */
   const logout = async () => {
     try {
-      if (isGuardian) {
-        // If in dev-mode, we just clear the local storage.
+      if (isGuardian || isTestUser) {
         localStorage.removeItem('kula-guardian-mode');
+        localStorage.removeItem('kula-test-user-mode');
         setIsGuardian(false);
+        setIsTestUser(false);
         setProfile(null);
         return;
       }
@@ -186,7 +265,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
    * Any child component inside <AuthProvider> can now access these.
    */
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signIn, logout, isGuardian, enableGuardianMode }}>
+    <AuthContext.Provider value={{ user, profile, loading, signIn, logout, isGuardian, enableGuardianMode, enableTestUserMode, updateProfile }}>
       {children}
     </AuthContext.Provider>
   );

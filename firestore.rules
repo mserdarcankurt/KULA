@@ -72,6 +72,15 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ─── Private Users Data ────────────────────────────────
+    // Collection: users_private/{userId}
+    // Contains: exactHomeLocation, savedLocations (coordinates)
+    // Read/write by: useAuth.tsx, Profile.tsx
+    // This is strictly restricted so that only the owner can read or write it.
+    match /users_private/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
     // ─── Items (Asks, Shares, İmece, Missions, Joins) ─────
     // Collection: items/{itemId}
     // Created by: PostItem.tsx

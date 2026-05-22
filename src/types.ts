@@ -64,7 +64,17 @@ export interface StandbyRule {
  * 
  * Used by: PostItem.tsx (creation), Explore.tsx (filtering), useItems.ts (queries)
  */
-export type ItemType = 'ASK' | 'SHARE' | 'IMECE' | 'MISSION' | 'JOIN' | 'CIRCLE_INVITE';
+export type ItemType = 'ASK' | 'SHARE' | 'IMECE' | 'MISSION' | 'JOIN' | 'CIRCLE_INVITE' | 'FLOW';
+
+/**
+ * SharingMode: Transaction/sharing optionalities for ASK and SHARE posts.
+ * - GIFT: Giveaway (for SHARE) or Keep (for ASK)
+ * - LEND: Borrow/lend expectation (offering a lend)
+ * - BORROW: Requesting to borrow
+ * - SKILL: Offering/requesting a skill share
+ * - FAVOR: Favor / Need a hand (acts of kindness)
+ */
+export type SharingMode = 'GIFT' | 'LEND' | 'BORROW' | 'SKILL' | 'FAVOR';
 
 /**
  * ItemStatus: The lifecycle of a post.
@@ -85,6 +95,20 @@ export type ItemStatus = 'ACTIVE' | 'MATCHED' | 'COMPLETED' | 'ARCHIVED';
  * Used by: useItems.ts for filtering, PostItem.tsx for the reach selector UI.
  */
 export type KulaReachType = 'VICINITY' | 'ALL_CIRCLES' | 'SPECIFIC_CIRCLES';
+
+/**
+ * TrustPrivacyLevel: Customizable trust-network scope for profiles, maps, and feed posts.
+ * From strictly private to public.
+ */
+export type TrustPrivacyLevel = 'PRIVATE' | 'DEGREE_1' | 'DEGREE_2' | 'DEGREE_3' | 'DEGREE_4' | 'PUBLIC';
+
+export interface UserPrivacySettings {
+  profileVisibility: TrustPrivacyLevel;       // Who can see profile details & lineage tree
+  neighborhoodVisibility: TrustPrivacyLevel;  // Who can see neighborhood centers on maps & feeds
+  historyVisibility: TrustPrivacyLevel;       // Who can see gratitude/vouch/exchange history
+  lineageVisibility: TrustPrivacyLevel;       // Who can see node position in vertical invite chains
+  hideAsConnector?: boolean;                  // Optional: hide identity as connector in trust paths (show as "Hidden")
+}
 
 // ═══════════════════════════════════════════════════════════════
 // USER PROFILE: The identity of every community member
@@ -129,7 +153,10 @@ export interface UserProfile {
   thePersonFor?: string[];                       // Legacy: old standby system (replaced by StandbyRule)
   lookoutRules?: LookoutRule[];                  // Active "I'm looking for X" rules
   standbyRules?: StandbyRule[];                  // Active "I have X if anyone needs it" rules
-  hasCompletedOnboarding?: boolean;              // If false, App.tsx forces Onboarding.tsx
+  hasCompletedOnboarding?: boolean;              // Legacy — kept for backward compat; new flow uses onboardingStep
+  onboardingStep?: 'INVITED' | 'PENDING' | 'PHILOSOPHY' | 'HOWTO' | 'CIRCLES' | 'PROFILE' | 'FIRST_ACT' | 'COMPLETE' | null;
+                                                   // State machine for the Storied Journey onboarding flow
+  skippedFirstAct?: boolean;                      // True if they skipped the initial posting prompt during onboarding
   hasCompletedInteractiveTour?: boolean;         // If false, TourGuide.tsx shows tutorial overlays
   hasCompletedSearchTour?: boolean;              // Tour for the search feature
   hasCompletedPostTour?: boolean;                // Tour for the posting feature
@@ -139,6 +166,42 @@ export interface UserProfile {
   trustMosaic?: TrustMosaic;                     // Participation stats displayed in TrustMosaic.tsx
   visibilityPreference?: 'PUBLIC' | 'NETWORK' | 'DEGREE_4' | 'DEGREE_3' | 'DEGREE_2' | 'DEGREE_1';
                                                  // Privacy: who can see your profile in the network
+  privacySettings?: UserPrivacySettings;         // Granular trust network privacy configurations
+  // ── Neighborhood Privacy Boundary ──
+  // These fields power the randomized circle that protects the user's exact home address.
+  // - exactHomeLocation: the REAL coordinates (private, never exposed to other users)
+  // - neighborhoodCenter: the OFFSET center (public, used for map pins and distance calc)
+  // - neighborhoodRadius: user-chosen radius in meters (500, 1000, or 2000)
+  exactHomeLocation?: { lat: number; lng: number };  // Private — real home coordinates
+  neighborhoodCenter?: { lat: number; lng: number };  // Public — offset center of neighborhood circle
+  neighborhoodRadius?: number;                        // Radius in meters (default: 1000)
+  neighborhoodName?: string;                          // Free-text name of the district/neighborhood (entered during onboarding)
+
+  // ── Address Book ──
+  // A list of user-defined saved locations (e.g. "Home", "Work", "Parents").
+  // Each entry stores private exact coordinates + a public randomized center.
+  // Used by PostItem.tsx to let users choose WHERE a post is pinned,
+  // instead of always relying on live GPS or the single "home" location.
+  savedLocations?: SavedLocation[];
+}
+
+/**
+ * SavedLocation: A single entry in the user's address book.
+ * Each location has its OWN privacy-offset center and radius, so the user
+ * can have different privacy zones for different places.
+ *
+ * PRIVACY: exactLocation is NEVER shared with other users. Only neighborhoodCenter
+ * is used for public display (map pins, distance calculations).
+ *
+ * USED BY: Profile.tsx (CRUD), PostItem.tsx (location picker)
+ */
+export interface SavedLocation {
+  id: string;                           // Unique identifier (generated client-side)
+  label: string;                        // User-defined label (e.g. "Home", "Work", "My Garden")
+  exactLocation: { lat: number; lng: number };     // Private — real coordinates
+  neighborhoodCenter: { lat: number; lng: number }; // Public — randomized offset center
+  neighborhoodRadius: number;           // Privacy radius in meters (500, 1000, or 2000)
+  isDefault?: boolean;                  // If true, this is the primary "My Neighborhood" location
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -168,12 +231,14 @@ export interface Item {
   title: string;
   description: string;
   type: ItemType;                     // ASK, SHARE, IMECE, etc.
+  sharingMode?: SharingMode;          // Transaction/sharing expectations (GIFT, LEND, etc.)
   category: string;                   // "Food", "Equipment", etc. → maps to artDirection.ts fallbacks
   images: string[];                   // User-uploaded photos. If empty, getFallbackImage(category) is used.
   status: ItemStatus;                 // ACTIVE → MATCHED → COMPLETED → ARCHIVED
   location: { lat: number; lng: number }; // GPS coordinates at time of posting
   isFeatured: boolean;                // Admin can feature items for visibility boost
   reachTypes: KulaReachType[];        // VICINITY, ALL_CIRCLES, SPECIFIC_CIRCLES
+  visibilityReach?: TrustPrivacyLevel; // Trust graph propagation level ('PRIVATE' to 'PUBLIC')
   targetCircles?: string[];           // If reachType includes SPECIFIC_CIRCLES, which ones?
   circleId?: string;                  // Legacy field for posts tied to a single circle
   ownerIsOrganization?: boolean;      // Cached from owner's profile for display purposes
@@ -181,11 +246,13 @@ export interface Item {
   ownerPhoto?: string;                // Cached — same reason
   createdAt: any;                     // Firestore Timestamp — used for "newest first" sorting
   distance?: number;                  // CALCULATED client-side by useItems.ts, not stored in DB
+  degrees?: number;                   // CALCULATED client-side by useItems.ts: trust connection degree
   participants?: string[];            // For IMECE: UIDs of people who joined the collective action
   neededParticipants?: number;        // For IMECE: "We need 5 people" target
   expiresAt?: any;                    // Auto-archive after this time
   eventTime?: any;                    // For JOIN/IMECE/MISSION: when does the event happen?
   eventEndTime?: any;                 // Optional end time for events
+  venueName?: string;                 // For JOIN: custom venue/meeting point name (e.g. "Cafe Kranzler")
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -274,7 +341,7 @@ export interface Message {
   senderId: string;                  // Who sent it
   senderName?: string;               // Cached for display
   text: string;
-  type?: 'TEXT' | 'POLL' | 'SYSTEM' | 'URGENT';
+  type?: 'TEXT' | 'POLL' | 'SYSTEM' | 'URGENT' | 'INVITE';
   replyToId?: string;                // If replying to a specific message (thread root)
   replyToText?: string;              // Preview of what was replied to
   replyToName?: string;              // Name of the person being replied to
@@ -292,6 +359,11 @@ export interface Message {
         votes: string[];             // Array of UIDs who voted for this option
       };
     };
+  };
+  invite?: {                         // INVITE type: circle sharing
+    circleId: string;
+    circleName: string;
+    circlePhotoURL?: string;
   };
   createdAt: any;
 }

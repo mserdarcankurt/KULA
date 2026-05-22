@@ -43,11 +43,35 @@ import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { collection, addDoc, serverTimestamp, query, getDocs, where, getDoc, doc } from 'firebase/firestore';
 import { useAuth } from '../hooks/useAuth';
-import { Send, Image as ImageIcon, MapPin, X, Users, Globe, Shield, Target, Settings, HeartHandshake, Camera, Video, Trash2, Plus } from 'lucide-react';
-import { Circle, KulaReachType, ItemType } from '../types';
+import { Send, Image as ImageIcon, MapPin, X, Users, Globe, Shield, Target, Settings, HeartHandshake, Camera, Video, Trash2, Plus, Home, Navigation, Coffee, Calendar, Clock, Sparkles } from 'lucide-react';
+import { Circle, KulaReachType, ItemType, SavedLocation, TrustPrivacyLevel, SharingMode } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { Joyride, Step, EventData, STATUS } from 'react-joyride';
 import { updateDoc } from 'firebase/firestore';
+
+// Location source mode for post creation
+type LocationMode = 'NEIGHBORHOOD' | 'CURRENT_GPS' | 'VENUE' | 'SAVED_LOCATION';
+
+const CATEGORIES = [
+  { value: 'Food', label: 'Food & Drinks', emoji: '🍞' },
+  { value: 'Equipment', label: 'Tools & Equipment', emoji: '🔨' },
+  { value: 'Electronics', label: 'Electronics', emoji: '🔌' },
+  { value: 'Furniture', label: 'Furniture', emoji: '🪑' },
+  { value: 'Clothing', label: 'Clothing & Wearables', emoji: '👕' },
+  { value: 'Plants', label: 'Plants & Garden', emoji: '🌱' },
+  { value: 'Books', label: 'Books & Learning', emoji: '📚' },
+  { value: 'Mobility', label: 'Bikes & Mobility', emoji: '🚲' },
+  { value: 'Art', label: 'Art & Crafts', emoji: '🎨' },
+  { value: 'Music', label: 'Music & Instruments', emoji: '🎸' },
+  { value: 'Service', label: 'Services & Skills', emoji: '🤝' },
+  { value: 'Home', label: 'Home & Cozy', emoji: '🏠' },
+  { value: 'Environment', label: 'Environment & Nature', emoji: '🌳' },
+  { value: 'Events', label: 'Events & Meetups', emoji: '🎉' },
+  { value: 'Support', label: 'Support & Care', emoji: '❤️' },
+  { value: 'Digital', label: 'Digital & Software', emoji: '💻' },
+  { value: 'Q&A', label: 'Q&A & Advice', emoji: '💡' },
+  { value: 'Community', label: 'Community & Other', emoji: '🏡' },
+];
 
 interface PostItemProps {
   location: { lat: number; lng: number } | null;
@@ -62,25 +86,65 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
   const [type, setType] = useState<ItemType>(initialType || 'SHARE');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [category, setCategory] = useState('');
+  const [category, setCategory] = useState('Community');
   const [neededParticipants, setNeededParticipants] = useState(3);
   const [reachTypes, setReachTypes] = useState<KulaReachType[]>(initialCircleId ? ['SPECIFIC_CIRCLES'] : ['VICINITY']);
   const [targetCircles, setTargetCircles] = useState<string[]>(initialCircleId ? [initialCircleId] : []);
   const [media, setMedia] = useState<{ url: string; type: 'image' | 'video' }[]>([]);
   const [shareLocation, setShareLocation] = useState(true);
   const [runTour, setRunTour] = useState(false);
+  const [availableFrom, setAvailableFrom] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
   const [eventTime, setEventTime] = useState('');
   const [eventEndTime, setEventEndTime] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [visibilityReach, setVisibilityReach] = useState<TrustPrivacyLevel>('PUBLIC');
+  const [sharingMode, setSharingMode] = useState<SharingMode | undefined>(undefined);
+
+  // ── Location Source Mode ──
+  // Controls WHERE the post is pinned on the map:
+  //   NEIGHBORHOOD = user's home coordinates (from profile)
+  //   CURRENT_GPS  = device's current GPS position
+  //   VENUE        = custom venue name (for JOINs, defaults to home coords)
+  const [locationMode, setLocationMode] = useState<LocationMode>(
+    (initialType || 'SHARE') === 'JOIN' ? 'VENUE'
+    : (profile?.savedLocations?.length ?? 0) > 0 ? 'SAVED_LOCATION'
+    : 'NEIGHBORHOOD'
+  );
+  const [venueName, setVenueName] = useState('');
+  const [selectedSavedLocationId, setSelectedSavedLocationId] = useState<string | null>(null);
+
+  // Derive saved locations from the user's profile
+  const savedLocations: SavedLocation[] = profile?.savedLocations || [];
+
+  // Auto-switch locationMode when item type changes
+  useEffect(() => {
+    if (type === 'JOIN') {
+      setLocationMode('VENUE');
+    } else if (savedLocations.length > 0) {
+      setLocationMode('SAVED_LOCATION');
+      // Auto-select the default or first saved location
+      if (!selectedSavedLocationId) {
+        const def = savedLocations.find(s => s.isDefault) || savedLocations[0];
+        setSelectedSavedLocationId(def.id);
+      }
+    } else {
+      setLocationMode('NEIGHBORHOOD');
+    }
+  }, [type]);
+
+  // Reset sharingMode when type changes (since ASK and SHARE have different modes)
+  useEffect(() => {
+    setSharingMode(undefined);
+  }, [type]);
 
   useEffect(() => {
-    if (profile?.hasCompletedOnboarding && !profile?.hasCompletedPostTour) {
-      const timer = setTimeout(() => {
-        setRunTour(true);
-      }, 500);
-      return () => clearTimeout(timer);
-    }
+    // [ALPHA] Post tour disabled for closed alpha — clean UX without overlays.
+    // TODO: Re-enable post-launch with updated steps for Feed-first flow.
+    // if (profile?.hasCompletedOnboarding && !profile?.hasCompletedPostTour) {
+    //   const timer = setTimeout(() => { setRunTour(true); }, 500);
+    //   return () => clearTimeout(timer);
+    // }
   }, [profile]);
 
   const handleJoyrideCallback = async (data: EventData) => {
@@ -203,35 +267,69 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
     fetchCircles();
   }, [profile?.joinedCircles]);
 
+  // Resolve location coordinates based on the selected locationMode
+  const resolveLocation = (): { lat: number; lng: number } | null => {
+    if (!shareLocation) return null;
+    switch (locationMode) {
+      case 'NEIGHBORHOOD':
+        // Use the user's neighborhood center (privacy-offset) or fallback to profile.location
+        return profile?.neighborhoodCenter || profile?.location || location || null;
+      case 'SAVED_LOCATION': {
+        // Use the selected saved location's privacy-offset center
+        const saved = savedLocations.find(s => s.id === selectedSavedLocationId);
+        if (saved) return saved.neighborhoodCenter;
+        // Fallback to default saved location or profile neighborhood
+        const defaultLoc = savedLocations.find(s => s.isDefault);
+        if (defaultLoc) return defaultLoc.neighborhoodCenter;
+        return profile?.neighborhoodCenter || profile?.location || location || null;
+      }
+      case 'CURRENT_GPS':
+        return location; // real-time device GPS
+      case 'VENUE':
+        // For venues, use neighborhood center as fallback coordinates
+        // (In future, this could be geocoded from the venue name)
+        return profile?.neighborhoodCenter || profile?.location || location || null;
+      default:
+        return location;
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !title || !description) return;
+    const finalTitle = type === 'FLOW' ? (description.slice(0, 60) || 'Flow Update') : title;
+    if (!user || !description || (type !== 'FLOW' && !title)) return;
 
     setSubmitting(true);
     try {
+      const resolvedLocation = resolveLocation();
+
       await addDoc(collection(db, 'items'), {
         ownerId: user.uid,
         ownerName: profile.displayName,
         ownerIsOrganization: profile.isOrganization || false,
         ownerPhoto: profile.photoURL,
-        title,
+        title: finalTitle,
         description,
         type,
-        category,
+        sharingMode: (type === 'SHARE' || type === 'ASK') && sharingMode ? sharingMode : null,
+        category: type === 'FLOW' ? 'Community' : category,
         status: 'ACTIVE',
         circleId: initialCircleId || null,
-        location: shareLocation ? location : null,
+        location: resolvedLocation,
         isFeatured: false,
         reachTypes,
+        visibilityReach,
         targetCircles: reachTypes.includes('SPECIFIC_CIRCLES') ? targetCircles : [],
         participants: [],
-        neededParticipants: type === 'IMECE' ? neededParticipants : 0,
+        neededParticipants: 0,
         images: media.filter(m => m.type === 'image').map(m => m.url),
         videos: media.filter(m => m.type === 'video').map(m => m.url),
         createdAt: serverTimestamp(),
+        availableFrom: availableFrom ? new Date(availableFrom) : null,
         expiresAt: ['ASK', 'SHARE'].includes(type) && expiresAt ? new Date(expiresAt) : null,
-        eventTime: ['JOIN', 'IMECE', 'MISSION'].includes(type) && eventTime ? new Date(eventTime) : null,
-        eventEndTime: ['JOIN', 'IMECE', 'MISSION'].includes(type) && eventEndTime ? new Date(eventEndTime) : null
+        eventTime: type === 'JOIN' && eventTime ? new Date(eventTime) : null,
+        eventEndTime: type === 'JOIN' && eventEndTime ? new Date(eventEndTime) : null,
+        venueName: type === 'JOIN' && venueName ? venueName : null,
       });
       onSuccess();
     } catch (err) {
@@ -293,7 +391,7 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
       />
       <div className="flex justify-between items-center mb-8">
 
-        <h2 className="serif text-3xl font-bold text-[--color-brand]">Create Entry</h2>
+        <h2 className="serif text-3xl font-bold text-brand">Create Entry</h2>
         <button 
           onClick={() => onCancel ? onCancel() : onSuccess()}
           className="text-stone-500 hover:text-stone-700 p-2 rounded-full hover:bg-stone-50 transition-colors"
@@ -326,8 +424,7 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
         )}
 
         <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-          {(['SHARE', 'ASK', 'JOIN', 'IMECE', 'MISSION'] as const)
-            .filter(t => t !== 'MISSION' || profile?.isOrganization)
+          {(['SHARE', 'ASK', 'JOIN', 'FLOW'] as const)
             .map(t => (
             <button
               key={t}
@@ -336,132 +433,239 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
               onClick={() => setType(t)}
               className={`flex-shrink-0 px-6 py-4 rounded-3xl text-[10px] font-black uppercase tracking-[0.2em] transition-all border-2 flex items-center gap-2 ${
                 type === t 
-                  ? t === 'MISSION' 
-                    ? 'bg-indigo-900 text-white border-indigo-900 shadow-lg scale-105'
-                    : t === 'JOIN'
+                  ? t === 'JOIN'
                     ? 'bg-teal-900 text-white border-teal-900 shadow-lg scale-105'
-                    : 'bg-stone-900 text-white border-stone-900 shadow-lg scale-105' 
+                    : t === 'FLOW'
+                      ? 'bg-[#C86A51] text-white border-[#C86A51] shadow-lg scale-105'
+                      : 'bg-stone-900 text-white border-stone-900 shadow-lg scale-105' 
                   : 'bg-white text-stone-400 border-stone-100'
               }`}
             >
               {t === 'SHARE' && 'Giving'}
               {t === 'ASK' && 'Asking'}
-              {t === 'IMECE' && 'İmece'}
-              {t === 'MISSION' && 'Mission'}
               {t === 'JOIN' && 'Join'}
-              {t === 'IMECE' && <HeartHandshake size={14} />}
-              {t === 'MISSION' && <Shield size={14} className="text-indigo-400" />}
+              {t === 'FLOW' && 'Flow'}
               {t === 'JOIN' && <Users size={14} className="text-teal-400" />}
+              {t === 'FLOW' && <Sparkles size={14} className="text-amber-350" />}
             </button>
           ))}
         </div>
+
+        {/* Sharing Modality Selector (Optional) */}
+        {(type === 'SHARE' || type === 'ASK') && (
+          <div className="space-y-3 bg-stone-50/50 p-4 rounded-[2rem] border border-stone-100/80 animate-in fade-in duration-300">
+            <div className="flex flex-col gap-1 px-1 text-left">
+              <label className="text-[10px] font-black uppercase tracking-widest text-stone-400">
+                Sharing Expectation (Optional)
+              </label>
+              <p className="text-[9px] text-stone-400 italic">
+                Choose how you want to share or receive this item
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {type === 'SHARE' ? (
+                <>
+                  {[
+                    { value: 'GIFT', label: 'Giveaway', emoji: '🎁', colorClass: 'border-emerald-100 text-emerald-700 bg-emerald-50/50 hover:border-emerald-300' },
+                    { value: 'LEND', label: 'Lend', emoji: '🛠️', colorClass: 'border-amber-100 text-amber-700 bg-amber-50/50 hover:border-amber-300' },
+                    { value: 'SKILL', label: 'Skill Share', emoji: '🤝', colorClass: 'border-indigo-100 text-indigo-700 bg-indigo-50/50 hover:border-indigo-300' }
+                  ].map(opt => {
+                    const isSelected = sharingMode === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setSharingMode(isSelected ? undefined : opt.value as any)}
+                        className={`px-4 py-3 rounded-2xl text-[10px] font-black uppercase tracking-wider border-2 transition-all flex items-center gap-2 ${
+                          isSelected
+                            ? 'bg-stone-900 border-stone-900 text-white shadow-md scale-[1.02]'
+                            : `${opt.colorClass} border-stone-100 bg-white text-stone-500`
+                        }`}
+                      >
+                        <span className="text-xs">{opt.emoji}</span>
+                        <span>{opt.label}</span>
+                      </button>
+                    );
+                  })}
+                </>
+              ) : (
+                <>
+                  {[
+                    { value: 'GIFT', label: 'Keep', emoji: '🎁', colorClass: 'border-emerald-100 text-emerald-700 bg-emerald-50/50 hover:border-emerald-300' },
+                    { value: 'BORROW', label: 'Borrow', emoji: '🔍', colorClass: 'border-amber-100 text-amber-700 bg-amber-50/50 hover:border-amber-300' },
+                    { value: 'FAVOR', label: 'Favor', emoji: '❤️', colorClass: 'border-rose-100 text-rose-700 bg-rose-50/50 hover:border-rose-300' }
+                  ].map(opt => {
+                    const isSelected = sharingMode === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setSharingMode(isSelected ? undefined : opt.value as any)}
+                        className={`px-4 py-3 rounded-2xl text-[10px] font-black uppercase tracking-wider border-2 transition-all flex items-center gap-2 ${
+                          isSelected
+                            ? 'bg-stone-900 border-stone-900 text-white shadow-md scale-[1.02]'
+                            : `${opt.colorClass} border-stone-100 bg-white text-stone-500`
+                        }`}
+                      >
+                        <span className="text-xs">{opt.emoji}</span>
+                        <span>{opt.label}</span>
+                      </button>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         {type === 'JOIN' && (
           <motion.div 
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
-            className="p-5 bg-teal-50 rounded-[2rem] border-2 border-teal-100 space-y-2"
+            className="p-5 bg-teal-50 rounded-[2rem] border-2 border-teal-100 space-y-4"
           >
             <div className="flex items-center gap-2 text-teal-900">
               <Users size={16} />
               <span className="text-[10px] font-black uppercase tracking-widest">Gathering & Event</span>
             </div>
             <p className="text-[10px] text-teal-600 italic">"Join" is for casual meetups, events, or activities (like 'Going for a run' or 'Coffee chat') where anyone can participate.</p>
-          </motion.div>
-        )}
-
-        {type === 'MISSION' && (
-          <motion.div 
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            className="p-5 bg-indigo-50 rounded-[2rem] border-2 border-indigo-100 space-y-2"
-          >
-            <div className="flex items-center gap-2 text-indigo-900">
-              <Shield size={16} />
-              <span className="text-[10px] font-black uppercase tracking-widest">Organization Mission</span>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase tracking-widest text-teal-700 ml-2">Meeting Place / Venue</label>
+              <div className="flex items-center gap-2">
+                <div className="p-2.5 bg-teal-100 rounded-xl text-teal-700">
+                  <Coffee size={16} />
+                </div>
+                <input 
+                  type="text" 
+                  placeholder="e.g. Mauerpark, Cafe Kranzler, Tempelhofer Feld..."
+                  value={venueName}
+                  onChange={(e) => setVenueName(e.target.value)}
+                  className="flex-1 bg-white border-b-2 border-teal-200 px-3 py-3 text-sm text-stone-800 focus:border-teal-500 outline-none transition-colors rounded-xl placeholder:text-stone-300"
+                />
+              </div>
             </div>
-            <p className="text-[10px] text-indigo-600 italic">"Missions" are for organizations seeking volunteers, cleanup help, or specific community actions.</p>
-          </motion.div>
-        )}
-
-        {type === 'IMECE' && (
-          <motion.div 
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            className="p-5 bg-amber-50 rounded-[2rem] border-2 border-amber-100 space-y-3"
-          >
-            <div className="flex justify-between items-center px-1">
-              <span className="text-[10px] font-black uppercase tracking-widest text-amber-700">Neighbors needed</span>
-              <span className="text-xl serif font-bold text-amber-900">{neededParticipants} hands</span>
-            </div>
-            <input 
-              type="range" 
-              min="2" 
-              max="20" 
-              value={neededParticipants}
-              onChange={(e) => setNeededParticipants(parseInt(e.target.value))}
-              className="w-full accent-amber-600 h-2 bg-amber-200 rounded-full appearance-none outline-none"
-            />
-            <p className="text-[10px] text-amber-600 italic">"İmece" is for collaborative tasks where many hands make light work.</p>
           </motion.div>
         )}
 
         <div className="space-y-6">
-          <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase tracking-widest text-stone-400 ml-2">What is it?</label>
-            <input 
-              type="text" 
-              placeholder="e.g. Garden tools, Fresh cake, Math tutoring..."
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="w-full bg-white border-b-2 border-stone-200 px-2 py-4 text-xl serif focus:border-[--color-brand] outline-none transition-colors"
-              required
-            />
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase tracking-widest text-stone-400 ml-2">Tell more</label>
-            <textarea 
-              placeholder="Describe the item or your need in detail..."
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={4}
-              className="w-full bg-white border-b-2 border-stone-200 px-2 py-4 text-stone-600 focus:border-[--color-brand] outline-none transition-colors overflow-hidden"
-              required
-            />
-          </div>
-
-          {['ASK', 'SHARE'].includes(type) && (
+          {type !== 'FLOW' && (
             <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase tracking-widest text-stone-400 ml-2">Available Until (Optional)</label>
+              <label className="text-[10px] font-black uppercase tracking-widest text-stone-400 ml-2">What is it?</label>
               <input 
-                type="date" 
-                value={expiresAt}
-                onChange={(e) => setExpiresAt(e.target.value)}
-                className="w-full bg-stone-50 rounded-2xl px-4 py-4 text-stone-600 focus:ring-2 focus:ring-[--color-brand] outline-none transition-all"
+                type="text" 
+                placeholder="e.g. Garden tools, Fresh cake, Math tutoring..."
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                className="w-full bg-white border-b-2 border-stone-200 px-2 py-4 text-xl serif focus:border-brand outline-none transition-colors"
+                required
               />
             </div>
           )}
 
-          {['JOIN', 'IMECE', 'MISSION'].includes(type) && (
-            <div className="space-y-4 bg-stone-50 p-4 rounded-3xl">
-              <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-widest text-stone-400 ml-2">When does it start? (Optional)</label>
-                <input 
-                  type="datetime-local" 
-                  value={eventTime}
-                  onChange={(e) => setEventTime(e.target.value)}
-                  className="w-full bg-white rounded-2xl px-4 py-3 text-stone-600 border border-stone-200 focus:ring-2 focus:ring-[--color-brand] outline-none transition-all"
-                />
+          {type !== 'FLOW' && (
+            <div className="space-y-3">
+              <label className="text-[10px] font-black uppercase tracking-widest text-stone-400 ml-2">Category</label>
+              <div className="grid grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-1 no-scrollbar bg-stone-50/50 p-3 rounded-[2rem] border border-stone-100">
+                {CATEGORIES.map(cat => (
+                  <button
+                    key={cat.value}
+                    type="button"
+                    onClick={() => setCategory(cat.value)}
+                    className={`px-3 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-wider border-2 transition-all flex items-center gap-2 text-left ${
+                      category === cat.value
+                        ? 'bg-stone-900 border-stone-900 text-white shadow-md scale-[1.02]'
+                        : 'bg-white text-stone-500 border-stone-100/80 hover:border-stone-300'
+                    }`}
+                  >
+                    <span className="text-sm">{cat.emoji}</span>
+                    <span className="truncate">{cat.label}</span>
+                  </button>
+                ))}
               </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-widest text-stone-400 ml-2">When does it end? (Optional)</label>
-                <input 
-                  type="datetime-local" 
-                  value={eventEndTime}
-                  onChange={(e) => setEventEndTime(e.target.value)}
-                  className="w-full bg-white rounded-2xl px-4 py-3 text-stone-600 border border-stone-200 focus:ring-2 focus:ring-[--color-brand] outline-none transition-all"
-                />
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase tracking-widest text-stone-400 ml-2">
+              {type === 'FLOW' ? 'Status / Update' : 'Tell more'}
+            </label>
+            <textarea 
+              placeholder={type === 'FLOW' ? "What's happening in the neighborhood? Share ideas, materials, or updates..." : "Describe the item or your need in detail..."}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={4}
+              className="w-full bg-white border-b-2 border-stone-200 px-2 py-4 text-stone-600 focus:border-brand outline-none transition-colors overflow-hidden"
+              required
+            />
+          </div>
+
+          {/* ── Availability Window — shown for ALL entry types EXCEPT FLOW ── */}
+          {type !== 'FLOW' && (
+            <div className="space-y-3 bg-stone-50 p-4 rounded-3xl border border-stone-100">
+              <div className="flex items-center gap-2 px-1">
+                <Calendar size={14} className="text-stone-400" />
+                <label className="text-[10px] font-black uppercase tracking-widest text-stone-400">Availability Window (Optional)</label>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-bold uppercase tracking-widest text-stone-400 ml-1 flex items-center gap-1">
+                    <Clock size={10} /> From
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={availableFrom}
+                    onChange={(e) => setAvailableFrom(e.target.value)}
+                    className="w-full bg-white rounded-2xl px-3 py-3 text-sm text-stone-700 border border-stone-200 focus:ring-2 focus:ring-brand outline-none transition-all"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-bold uppercase tracking-widest text-stone-400 ml-1 flex items-center gap-1">
+                    <Clock size={10} /> Until
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={expiresAt}
+                    onChange={(e) => setExpiresAt(e.target.value)}
+                    className="w-full bg-white rounded-2xl px-3 py-3 text-sm text-stone-700 border border-stone-200 focus:ring-2 focus:ring-brand outline-none transition-all"
+                  />
+                </div>
+              </div>
+              {(availableFrom || expiresAt) && (
+                <p className="text-[9px] text-stone-400 italic px-1">
+                  {availableFrom && !expiresAt && `Available from ${new Date(availableFrom).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`}
+                  {!availableFrom && expiresAt && `Available until ${new Date(expiresAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`}
+                  {availableFrom && expiresAt && `Available ${new Date(availableFrom).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })} → ${new Date(expiresAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}`}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* ── JOIN-specific event time window ── */}
+          {type === 'JOIN' && (
+            <div className="space-y-4 bg-teal-50 p-4 rounded-3xl border border-teal-100">
+              <div className="flex items-center gap-2 px-1">
+                <Clock size={14} className="text-teal-500" />
+                <label className="text-[10px] font-black uppercase tracking-widest text-teal-600">Event Time (Optional)</label>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-bold uppercase tracking-widest text-teal-500 ml-1">Starts</label>
+                  <input
+                    type="datetime-local"
+                    value={eventTime}
+                    onChange={(e) => setEventTime(e.target.value)}
+                    className="w-full bg-white rounded-2xl px-3 py-3 text-sm text-stone-700 border border-teal-200 focus:ring-2 focus:ring-teal-400 outline-none transition-all"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-bold uppercase tracking-widest text-teal-500 ml-1">Ends</label>
+                  <input
+                    type="datetime-local"
+                    value={eventEndTime}
+                    onChange={(e) => setEventEndTime(e.target.value)}
+                    className="w-full bg-white rounded-2xl px-3 py-3 text-sm text-stone-700 border border-teal-200 focus:ring-2 focus:ring-teal-400 outline-none transition-all"
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -498,6 +702,46 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
                 )}
               </div>
             </button>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between px-2">
+              <label className="text-[10px] font-black uppercase tracking-widest text-stone-400">Trust Network Reach</label>
+            </div>
+            
+            <div className="w-full p-4 bg-stone-50 border border-stone-200/80 rounded-[2rem] flex flex-col gap-4">
+              <p className="text-[10px] text-stone-400 font-medium px-2 leading-tight">
+                Controls the maximum degree of connection distance users must have from you to see this post.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {[
+                  { id: 'PRIVATE', title: 'Private', desc: 'Only visible to you' },
+                  { id: 'DEGREE_1', title: '1st Connection', desc: 'Only direct vouched friends & family' },
+                  { id: 'DEGREE_2', title: '2nd Connection', desc: 'Friends of friends' },
+                  { id: 'DEGREE_3', title: '3rd Connection', desc: 'Up to 3 separation steps' },
+                  { id: 'DEGREE_4', title: '4th Connection', desc: 'Max trust graph separation (4 steps)' },
+                  { id: 'PUBLIC', title: 'Public (Anyone)', desc: 'Visible to everyone' }
+                ].map(option => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => setVisibilityReach(option.id as TrustPrivacyLevel)}
+                    className={`p-3 rounded-2xl border-2 flex flex-col transition-all text-left ${
+                      visibilityReach === option.id
+                        ? 'border-stone-900 bg-stone-900 text-white shadow-md'
+                        : 'border-stone-100 bg-white text-stone-500 hover:border-stone-200'
+                    }`}
+                  >
+                    <span className="text-[10px] font-black uppercase tracking-widest leading-none mb-1">{option.title}</span>
+                    <span className={`text-[9px] font-medium leading-tight ${
+                      visibilityReach === option.id ? 'text-stone-300' : 'text-stone-400'
+                    }`}>
+                      {option.desc}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -666,54 +910,206 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
           </div>
           
           <div className="space-y-3">
-            <div className={`flex items-center justify-between px-4 py-4 rounded-3xl border transition-all ${
-              shareLocation 
-                ? 'bg-white border-[--color-brand] shadow-sm' 
-                : 'bg-stone-50 border-stone-100'
-            }`}>
-              <div className="flex items-center gap-3">
-                <div className={`p-2.5 rounded-xl transition-all ${
-                  shareLocation ? 'bg-[--color-brand] text-white' : 'bg-stone-200 text-stone-400'
-                }`}>
-                  <MapPin size={20} />
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-xs font-black uppercase tracking-widest text-stone-900">Pin to Map</span>
-                  <span className="text-[9px] text-stone-400 font-bold uppercase tracking-tight">
-                    {isLocationMandatory 
-                      ? 'Required for Local Resonance' 
-                      : shareLocation 
-                        ? 'Discovery Map Enabled' 
-                        : 'Feed Only (Privacy Mode)'}
-                  </span>
-                </div>
+            {/* Location Source Selector */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase tracking-widest text-stone-400 ml-2">Location Source</label>
+              <div className="space-y-2">
+                {/* Option 1: My Neighborhood (only if no saved locations) */}
+                {savedLocations.length === 0 && (
+                  <button
+                    type="button"
+                    onClick={() => { setLocationMode('NEIGHBORHOOD'); setShareLocation(true); }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl border-2 transition-all ${
+                      locationMode === 'NEIGHBORHOOD'
+                        ? 'border-brand bg-white shadow-sm'
+                        : 'border-stone-100 bg-stone-50 hover:border-stone-200'
+                    }`}
+                  >
+                    <div className={`p-2 rounded-xl transition-all ${
+                      locationMode === 'NEIGHBORHOOD' ? 'bg-brand text-white' : 'bg-stone-200 text-stone-400'
+                    }`}>
+                      <Home size={16} />
+                    </div>
+                    <div className="flex-1 text-left">
+                      <div className="text-xs font-bold text-stone-900">My Neighborhood</div>
+                      <div className="text-[9px] text-stone-400 font-medium">Pins to your home area (privacy-protected)</div>
+                    </div>
+                    {locationMode === 'NEIGHBORHOOD' && (
+                      <div className="w-2 h-2 bg-brand rounded-full" />
+                    )}
+                  </button>
+                )}
+
+                {/* Option 1b: Saved Location picker (when user has address book entries) */}
+                {savedLocations.length > 0 && (
+                  <div className="space-y-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLocationMode('SAVED_LOCATION');
+                        setShareLocation(true);
+                        // Auto-select the default or first saved location
+                        if (!selectedSavedLocationId) {
+                          const def = savedLocations.find(s => s.isDefault) || savedLocations[0];
+                          setSelectedSavedLocationId(def.id);
+                        }
+                      }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl border-2 transition-all ${
+                        locationMode === 'SAVED_LOCATION'
+                          ? 'border-brand bg-white shadow-sm'
+                          : 'border-stone-100 bg-stone-50 hover:border-stone-200'
+                      }`}
+                    >
+                      <div className={`p-2 rounded-xl transition-all ${
+                        locationMode === 'SAVED_LOCATION' ? 'bg-brand text-white' : 'bg-stone-200 text-stone-400'
+                      }`}>
+                        <MapPin size={16} />
+                      </div>
+                      <div className="flex-1 text-left">
+                        <div className="text-xs font-bold text-stone-900">Saved Location</div>
+                        <div className="text-[9px] text-stone-400 font-medium">Pick from your address book</div>
+                      </div>
+                      {locationMode === 'SAVED_LOCATION' && (
+                        <div className="w-2 h-2 bg-brand rounded-full" />
+                      )}
+                    </button>
+
+                    {/* Sub-options: individual saved locations */}
+                    {locationMode === 'SAVED_LOCATION' && (
+                      <div className="ml-8 space-y-1">
+                        {savedLocations.map(loc => (
+                          <button
+                            key={loc.id}
+                            type="button"
+                            onClick={() => setSelectedSavedLocationId(loc.id)}
+                            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl border transition-all text-left ${
+                              selectedSavedLocationId === loc.id
+                                ? 'border-brand bg-brand/5 shadow-sm'
+                                : 'border-stone-100 bg-stone-50/50 hover:border-stone-200'
+                            }`}
+                          >
+                            <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-black ${
+                              selectedSavedLocationId === loc.id
+                                ? 'bg-brand text-white'
+                                : 'bg-stone-200 text-stone-400'
+                            }`}>
+                              {loc.label.charAt(0).toUpperCase()}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[11px] font-bold text-stone-800 truncate">{loc.label}</div>
+                              <div className="text-[8px] text-stone-400 font-medium">
+                                {loc.neighborhoodRadius >= 1000
+                                  ? `${loc.neighborhoodRadius / 1000}km privacy zone`
+                                  : `${loc.neighborhoodRadius}m privacy zone`
+                                }
+                                {loc.isDefault && ' · default'}
+                              </div>
+                            </div>
+                            {selectedSavedLocationId === loc.id && (
+                              <div className="w-1.5 h-1.5 bg-brand rounded-full" />
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Option 2: Current GPS */}
+                <button
+                  type="button"
+                  onClick={() => { setLocationMode('CURRENT_GPS'); setShareLocation(true); }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl border-2 transition-all ${
+                    locationMode === 'CURRENT_GPS'
+                      ? 'border-brand bg-white shadow-sm'
+                      : 'border-stone-100 bg-stone-50 hover:border-stone-200'
+                  }`}
+                >
+                  <div className={`p-2 rounded-xl transition-all ${
+                    locationMode === 'CURRENT_GPS' ? 'bg-brand text-white' : 'bg-stone-200 text-stone-400'
+                  }`}>
+                    <Navigation size={16} />
+                  </div>
+                  <div className="flex-1 text-left">
+                    <div className="text-xs font-bold text-stone-900">Exact Current Location</div>
+                    <div className="text-[9px] text-stone-400 font-medium">
+                      {location ? 'Uses your real-time GPS coordinates' : 'GPS not available'}
+                    </div>
+                  </div>
+                  {locationMode === 'CURRENT_GPS' && (
+                    <div className="w-2 h-2 bg-brand rounded-full" />
+                  )}
+                </button>
+
+                {/* Option 3: Specific Venue (default for JOIN) */}
+                <button
+                  type="button"
+                  onClick={() => { setLocationMode('VENUE'); setShareLocation(true); }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl border-2 transition-all ${
+                    locationMode === 'VENUE'
+                      ? 'border-teal-500 bg-teal-50 shadow-sm'
+                      : 'border-stone-100 bg-stone-50 hover:border-stone-200'
+                  }`}
+                >
+                  <div className={`p-2 rounded-xl transition-all ${
+                    locationMode === 'VENUE' ? 'bg-teal-600 text-white' : 'bg-stone-200 text-stone-400'
+                  }`}>
+                    <Coffee size={16} />
+                  </div>
+                  <div className="flex-1 text-left">
+                    <div className="text-xs font-bold text-stone-900">Specific Venue</div>
+                    <div className="text-[9px] text-stone-400 font-medium">Event/meetup location (e.g. a cafe or park)</div>
+                  </div>
+                  {locationMode === 'VENUE' && (
+                    <div className="w-2 h-2 bg-teal-500 rounded-full" />
+                  )}
+                </button>
               </div>
-              <button
-                type="button"
-                disabled={isLocationMandatory}
-                onClick={() => setShareLocation(!shareLocation)}
-                className={`w-12 h-6 rounded-full transition-all relative ${
-                  shareLocation ? 'bg-[--color-brand]' : 'bg-stone-300'
-                } ${isLocationMandatory ? 'opacity-50' : ''}`}
-              >
-                <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all shadow-sm ${
-                  shareLocation ? 'left-7' : 'left-1'
-                }`} />
-              </button>
             </div>
 
+            {/* Venue name input (shown when VENUE mode or JOIN type) */}
+            {locationMode === 'VENUE' && type !== 'JOIN' && (
+              <div className="px-2">
+                <input 
+                  type="text" 
+                  placeholder="Venue name (e.g. Mauerpark, Cafe Kranzler...)"
+                  value={venueName}
+                  onChange={(e) => setVenueName(e.target.value)}
+                  className="w-full bg-white border-b-2 border-teal-200 px-3 py-3 text-sm text-stone-800 focus:border-teal-500 outline-none transition-colors placeholder:text-stone-300"
+                />
+              </div>
+            )}
+
+            {/* Location status indicator */}
             <div className={`flex items-center justify-center gap-2 py-3 rounded-2xl text-[9px] font-black uppercase tracking-[0.15em] transition-all border ${
-              shareLocation 
-                ? location 
-                  ? 'bg-green-50 text-green-600 border-green-100' 
+              locationMode === 'CURRENT_GPS'
+                ? location
+                  ? 'bg-green-50 text-green-600 border-green-100'
                   : 'bg-amber-50 text-amber-600 border-amber-100'
-                : 'bg-stone-100 text-stone-400 border-stone-100'
+                : locationMode === 'VENUE'
+                  ? 'bg-teal-50 text-teal-600 border-teal-100'
+                  : 'bg-stone-50 text-stone-500 border-stone-100'
             }`}>
-              {shareLocation ? (
+              {locationMode === 'NEIGHBORHOOD' && (
+                <>
+                  <Home size={10} />
+                  Pinned to Your Neighborhood
+                </>
+              )}
+              {locationMode === 'SAVED_LOCATION' && (
+                <>
+                  <MapPin size={10} />
+                  {(() => {
+                    const sel = savedLocations.find(s => s.id === selectedSavedLocationId);
+                    return sel ? `📍 ${sel.label}` : 'Select a saved location';
+                  })()}
+                </>
+              )}
+              {locationMode === 'CURRENT_GPS' && (
                 location ? (
                   <>
                     <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.5)]" />
-                    Precise Discovery Active
+                    Live GPS Active
                   </>
                 ) : (
                   <>
@@ -721,19 +1117,14 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
                     Acquiring Signal...
                   </>
                 )
-              ) : (
+              )}
+              {locationMode === 'VENUE' && (
                 <>
-                  <Shield size={10} />
-                  Location Shielded
+                  <Coffee size={10} />
+                  {venueName ? `Venue: ${venueName}` : 'Enter a venue name above'}
                 </>
               )}
             </div>
-
-            {!shareLocation && !isLocationMandatory && (
-              <p className="text-[9px] text-stone-400 px-4 text-center leading-relaxed font-medium">
-                Your post will appear in Circle feeds but will be <span className="text-stone-600 font-bold">invisible</span> on the neighborhood radar and discovery maps.
-              </p>
-            )}
           </div>
         </div>
 

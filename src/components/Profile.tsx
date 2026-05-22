@@ -44,14 +44,96 @@
  */
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
-import { LogOut, Star, Award, MapPin, Heart, Settings, Tag, Clock, CheckCircle2, Globe, Shield, Target, Sparkles, Languages, X, Users, Instagram } from 'lucide-react';
+import { LogOut, Star, Award, MapPin, Heart, Settings, Tag, Clock, CheckCircle2, Globe, Shield, Target, Sparkles, Languages, X, Users, Instagram, Home, Plus, Trash2, User, Network, EyeOff } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { collection, query, where, onSnapshot, orderBy, writeBatch, serverTimestamp, doc, updateDoc, getDocs, getDoc, addDoc, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, writeBatch, serverTimestamp, doc, updateDoc, setDoc, getDocs, getDoc, addDoc, deleteDoc } from 'firebase/firestore';
 import PublicProfile from './PublicProfile';
-import { Item } from '../types';
+import { Item, SavedLocation, UserPrivacySettings, TrustPrivacyLevel } from '../types';
 import SeedData from './SeedData';
 import TrustMosaicComponent from './TrustMosaic';
 import { getFallbackImage } from '../lib/artDirection';
+import { clearTrustGraphCache } from '../lib/trustGraph';
+import { generateRandomizedCenter, NEIGHBORHOOD_RADIUS_OPTIONS, DEFAULT_NEIGHBORHOOD_RADIUS } from '../lib/neighborhoodPrivacy';
+import AddressAutocomplete from './AddressAutocomplete';
+import { Map, AdvancedMarker, useMap } from '@vis.gl/react-google-maps';
+
+const API_KEY = (import.meta.env.VITE_GOOGLE_MAPS_PLATFORM_KEY as string) || '';
+
+// Helper component for drawing a circle on the Google Map preview
+function MapCircle({ center, radius, strokeColor = '#c1a077', fillColor = '#c1a077', opacity = 0.15 }: {
+  center: { lat: number; lng: number };
+  radius: number;
+  strokeColor?: string;
+  fillColor?: string;
+  opacity?: number;
+}) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!map) return;
+
+    const googleObj = (window as any).google;
+    if (!googleObj || !googleObj.maps) return;
+
+    const circle = new googleObj.maps.Circle({
+      map,
+      center,
+      radius,
+      strokeColor,
+      strokeOpacity: 0.8,
+      strokeWeight: 1.5,
+      fillColor,
+      fillOpacity: opacity,
+    });
+
+    return () => {
+      circle.setMap(null);
+    };
+  }, [map, center, radius, strokeColor, fillColor, opacity]);
+
+  return null;
+}
+
+// Helper component for drawing a dashed path between exact home and offset center
+function MapPolyline({ path, strokeColor = '#c1a077' }: {
+  path: { lat: number; lng: number }[];
+  strokeColor?: string;
+}) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!map || path.length < 2) return;
+
+    const googleObj = (window as any).google;
+    if (!googleObj || !googleObj.maps) return;
+
+    const lineSymbol = {
+      path: 'M 0,-1 0,1',
+      strokeOpacity: 1,
+      scale: 1.5
+    };
+
+    const polyline = new googleObj.maps.Polyline({
+      map,
+      path,
+      geodesic: true,
+      strokeColor,
+      strokeOpacity: 0,
+      icons: [{
+        icon: lineSymbol,
+        offset: '0',
+        repeat: '10px'
+      }],
+    });
+
+    return () => {
+      polyline.setMap(null);
+    };
+  }, [map, path, strokeColor]);
+
+  return null;
+}
+
 
 interface ItemRowProps {
   item: Item;
@@ -62,8 +144,6 @@ interface ItemRowProps {
 function ItemRow({ item, isParticipation }: ItemRowProps) {
   return (
     <div className={`p-4 border rounded-2xl flex items-center gap-4 group hover:shadow-md transition-all ${
-      item.type === 'IMECE' ? 'bg-amber-50/30 border-amber-100' : 
-      item.type === 'MISSION' ? 'bg-indigo-50/30 border-indigo-100' : 
       item.type === 'JOIN' ? 'bg-teal-50/30 border-teal-100' : 'bg-white border-stone-100'
     }`}>
       <div className="w-16 h-16 bg-stone-50 rounded-xl flex-shrink-0 relative overflow-hidden">
@@ -75,8 +155,6 @@ function ItemRow({ item, isParticipation }: ItemRowProps) {
       </div>
       <div className="flex-1 min-w-0">
         <h4 className={`font-bold text-sm truncate ${
-          item.type === 'IMECE' ? 'text-amber-900' : 
-          item.type === 'MISSION' ? 'text-indigo-900' : 
           item.type === 'JOIN' ? 'text-teal-900' : 'text-stone-900'
         }`}>
           {item.title}
@@ -110,7 +188,7 @@ function ItemRow({ item, isParticipation }: ItemRowProps) {
           <X size={16} />
         </button>
       )}
-      <div className={`${isParticipation || item.status === 'COMPLETED' ? 'text-green-500' : 'text-stone-300'} group-hover:text-[--color-brand] transition-colors`}>
+      <div className={`${isParticipation || item.status === 'COMPLETED' ? 'text-green-500' : 'text-stone-300'} group-hover:text-brand transition-colors`}>
         <CheckCircle2 size={20} />
       </div>
     </div>
@@ -119,16 +197,18 @@ function ItemRow({ item, isParticipation }: ItemRowProps) {
 export default function Profile({ 
   onRestartOnboarding,
   onSeedComplete,
-  onNavigateToGuardian
+  onNavigateToGuardian,
+  onNavigateToChat
 }: { 
   onRestartOnboarding?: () => void,
   onSeedComplete?: () => void,
-  onNavigateToGuardian?: () => void
+  onNavigateToGuardian?: () => void,
+  onNavigateToChat?: (chatId: string) => void
 }) {
-  const { user, profile, logout, isGuardian } = useAuth();
+  const { user, profile, logout, isGuardian, updateProfile } = useAuth();
   const [items, setItems] = useState<Item[]>([]);
   const [loadingItems, setLoadingItems] = useState(true);
-  const [filter, setFilter] = useState<'SHARE' | 'ASK' | 'IMECE' | 'MISSION' | 'JOIN'>('SHARE');
+  const [filter, setFilter] = useState<'SHARE' | 'ASK' | 'JOIN'>('SHARE');
   const [joinedImece, setJoinedImece] = useState<Item[]>([]);
   const [loadingJoined, setLoadingJoined] = useState(true);
   const [seeding, setSeeding] = useState(false);
@@ -155,6 +235,218 @@ export default function Profile({
   const [pendingVouches, setPendingVouches] = useState<any[]>([]);
   const [acceptingVouchId, setAcceptingVouchId] = useState<string | null>(null);
   const [selectedVouchProfile, setSelectedVouchProfile] = useState<string | null>(null);
+
+  // ── Address Book State ──
+  const [savedLocations, setSavedLocations] = useState<SavedLocation[]>(profile.savedLocations || []);
+  const [showAddLocation, setShowAddLocation] = useState(false);
+  const [newLocLabel, setNewLocLabel] = useState('');
+  const [newLocLat, setNewLocLat] = useState('');
+  const [newLocLng, setNewLocLng] = useState('');
+  const [newLocRadius, setNewLocRadius] = useState<number>(DEFAULT_NEIGHBORHOOD_RADIUS);
+  const [savingLocation, setSavingLocation] = useState(false);
+  const [editingLocationId, setEditingLocationId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [previewCenter, setPreviewCenter] = useState<{ lat: number; lng: number } | null>(null);
+
+  // Edit address state variables
+  const [editingLocLabel, setEditingLocLabel] = useState('');
+  const [editingLocLat, setEditingLocLat] = useState('');
+  const [editingLocLng, setEditingLocLng] = useState('');
+  const [editingLocRadius, setEditingLocRadius] = useState<number>(DEFAULT_NEIGHBORHOOD_RADIUS);
+  const [editingPreviewCenter, setEditingPreviewCenter] = useState<{ lat: number; lng: number } | null>(null);
+
+  // Synchronize editing offset center for settings map preview
+  useEffect(() => {
+    if (!editingLocationId || !editingLocLat || !editingLocLng) {
+      return;
+    }
+    
+    // Find the original location to see if coordinates or radius actually changed.
+    // If they DID NOT change, keep the original neighborhood center so we don't regenerate on every character change or trivial rerender.
+    const original = savedLocations.find(l => l.id === editingLocationId);
+    const latNum = parseFloat(editingLocLat);
+    const lngNum = parseFloat(editingLocLng);
+    
+    if (isNaN(latNum) || isNaN(lngNum)) return;
+    
+    if (original && 
+        Math.abs(original.exactLocation.lat - latNum) < 1e-7 && 
+        Math.abs(original.exactLocation.lng - lngNum) < 1e-7 && 
+        original.neighborhoodRadius === editingLocRadius) {
+      setEditingPreviewCenter(original.neighborhoodCenter);
+      return;
+    }
+
+    const exactCoords = { lat: latNum, lng: lngNum };
+    const center = generateRandomizedCenter(exactCoords, editingLocRadius);
+    setEditingPreviewCenter(center);
+  }, [editingLocLat, editingLocLng, editingLocRadius, editingLocationId, savedLocations]);
+
+
+  // Synchronize preview offset center for settings map preview
+  useEffect(() => {
+    if (!newLocLat || !newLocLng) {
+      setPreviewCenter(null);
+      return;
+    }
+    const exactCoords = { lat: parseFloat(newLocLat), lng: parseFloat(newLocLng) };
+    if (!isNaN(exactCoords.lat) && !isNaN(exactCoords.lng)) {
+      const center = generateRandomizedCenter(exactCoords, newLocRadius);
+      setPreviewCenter(center);
+    }
+  }, [newLocLat, newLocLng, newLocRadius]);
+
+  // Keep local state in sync with profile changes
+  useEffect(() => {
+    setSavedLocations(profile.savedLocations || []);
+  }, [profile.savedLocations]);
+
+  const addSavedLocation = async () => {
+    if (!user || !newLocLabel.trim() || !newLocLat || !newLocLng) return;
+    setSavingLocation(true);
+    try {
+      const exactCoords = { lat: parseFloat(newLocLat), lng: parseFloat(newLocLng) };
+      if (isNaN(exactCoords.lat) || isNaN(exactCoords.lng)) {
+        alert('Please enter valid latitude and longitude values.');
+        setSavingLocation(false);
+        return;
+      }
+      const center = previewCenter || generateRandomizedCenter(exactCoords, newLocRadius);
+      const newLoc: SavedLocation = {
+        id: `loc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        label: newLocLabel.trim(),
+        exactLocation: exactCoords,
+        neighborhoodCenter: center,
+        neighborhoodRadius: newLocRadius,
+        isDefault: savedLocations.length === 0, // First one is auto-default
+      };
+      const updated = [...savedLocations, newLoc];
+      // Save private data to users_private
+      await setDoc(doc(db, 'users_private', user.uid), {
+        savedLocations: updated,
+        ...(newLoc.isDefault ? {
+          exactHomeLocation: exactCoords,
+        } : {}),
+      }, { merge: true });
+
+      // Save public data to users
+      await updateDoc(doc(db, 'users', user.uid), {
+        ...(newLoc.isDefault ? {
+          neighborhoodCenter: center,
+          neighborhoodRadius: newLocRadius,
+        } : {}),
+      });
+
+      setSavedLocations(updated);
+      setNewLocLabel('');
+      setNewLocLat('');
+      setNewLocLng('');
+      setPreviewCenter(null);
+      setNewLocRadius(DEFAULT_NEIGHBORHOOD_RADIUS);
+      setShowAddLocation(false);
+    } catch (err) {
+      console.error('Failed to add location:', err);
+    } finally {
+      setSavingLocation(false);
+    }
+  };
+
+  const removeSavedLocation = async (locId: string) => {
+    if (!user) return;
+    const updated = savedLocations.filter(l => l.id !== locId);
+    // If we removed the default, promote the first remaining
+    if (updated.length > 0 && !updated.some(l => l.isDefault)) {
+      updated[0].isDefault = true;
+    }
+    try {
+      const defaultLoc = updated.find(l => l.isDefault);
+      // Save private data to users_private
+      await setDoc(doc(db, 'users_private', user.uid), {
+        savedLocations: updated,
+        exactHomeLocation: defaultLoc ? defaultLoc.exactLocation : null,
+      }, { merge: true });
+
+      // Save public data to users
+      await updateDoc(doc(db, 'users', user.uid), {
+        neighborhoodCenter: defaultLoc ? defaultLoc.neighborhoodCenter : null,
+        neighborhoodRadius: defaultLoc ? defaultLoc.neighborhoodRadius : DEFAULT_NEIGHBORHOOD_RADIUS,
+      });
+
+      setSavedLocations(updated);
+    } catch (err) {
+      console.error('Failed to remove location:', err);
+    }
+  };
+
+  const setDefaultLocation = async (locId: string) => {
+    if (!user) return;
+    const updated = savedLocations.map(l => ({ ...l, isDefault: l.id === locId }));
+    const defaultLoc = updated.find(l => l.isDefault);
+    try {
+      if (defaultLoc) {
+        // Save private data to users_private
+        await setDoc(doc(db, 'users_private', user.uid), {
+          savedLocations: updated,
+          exactHomeLocation: defaultLoc.exactLocation,
+        }, { merge: true });
+
+        // Save public data to users
+        await updateDoc(doc(db, 'users', user.uid), {
+          neighborhoodCenter: defaultLoc.neighborhoodCenter,
+          neighborhoodRadius: defaultLoc.neighborhoodRadius,
+        });
+      }
+      setSavedLocations(updated);
+    } catch (err) {
+      console.error('Failed to set default location:', err);
+    }
+  };
+
+  const saveEditedLocation = async (locId: string) => {
+    if (!user || !editingLocLabel.trim() || !editingLocLat || !editingLocLng) return;
+    const latNum = parseFloat(editingLocLat);
+    const lngNum = parseFloat(editingLocLng);
+    if (isNaN(latNum) || isNaN(lngNum)) {
+      alert('Please enter valid coordinates.');
+      return;
+    }
+
+    const updated = savedLocations.map(l => {
+      if (l.id !== locId) return l;
+      return {
+        ...l,
+        label: editingLocLabel.trim(),
+        exactLocation: { lat: latNum, lng: lngNum },
+        neighborhoodCenter: editingPreviewCenter || generateRandomizedCenter({ lat: latNum, lng: lngNum }, editingLocRadius),
+        neighborhoodRadius: editingLocRadius,
+      };
+    });
+
+    const defaultLoc = updated.find(l => l.isDefault);
+    try {
+      // Save private data to users_private
+      await setDoc(doc(db, 'users_private', user.uid), {
+        savedLocations: updated,
+        ...(defaultLoc && defaultLoc.id === locId ? {
+          exactHomeLocation: defaultLoc.exactLocation,
+        } : {}),
+      }, { merge: true });
+
+      // Save public data to users
+      await updateDoc(doc(db, 'users', user.uid), {
+        ...(defaultLoc && defaultLoc.id === locId ? {
+          neighborhoodCenter: defaultLoc.neighborhoodCenter,
+          neighborhoodRadius: defaultLoc.neighborhoodRadius,
+        } : {}),
+      });
+
+      setSavedLocations(updated);
+      setEditingLocationId(null);
+    } catch (err) {
+      console.error('Failed to save edited location:', err);
+    }
+  };
+
 
   const updateProfileName = async () => {
     if (!user || !newName.trim()) return;
@@ -252,8 +544,9 @@ export default function Profile({
   const restartOnboarding = async () => {
     if (!user) return;
     try {
-      await updateDoc(doc(db, 'users', user.uid), {
+      await updateProfile({
         hasCompletedOnboarding: false,
+        onboardingStep: 'PHILOSOPHY',
         hasCompletedInteractiveTour: false,
         hasCompletedSearchTour: false,
         hasCompletedPostTour: false
@@ -281,12 +574,77 @@ export default function Profile({
     }
   };
 
+  const updatePrivacySetting = async (field: keyof UserPrivacySettings, value: TrustPrivacyLevel) => {
+    if (!user) return;
+    setUpdatingVisibility(true);
+    try {
+      const currentSettings = profile.privacySettings || {
+        profileVisibility: (profile.visibilityPreference || 'PUBLIC') as TrustPrivacyLevel,
+        neighborhoodVisibility: 'PUBLIC',
+        historyVisibility: 'PUBLIC',
+        lineageVisibility: 'PUBLIC'
+      };
+      const updatedSettings = {
+        ...currentSettings,
+        [field]: value
+      };
+      
+      const extraUpdates = field === 'profileVisibility' ? { 
+        visibilityPreference: value === 'PRIVATE' ? 'DEGREE_1' : (value === 'PUBLIC' ? 'PUBLIC' : value)
+      } : {};
+
+      await updateDoc(doc(db, 'users', user.uid), {
+        privacySettings: updatedSettings,
+        ...extraUpdates
+      });
+    } catch (err) {
+      console.error(`Failed to update privacy setting ${field}:`, err);
+    } finally {
+      setUpdatingVisibility(false);
+    }
+  };
+
+  const updateHideAsConnector = async (value: boolean) => {
+    if (!user) return;
+    setUpdatingVisibility(true);
+    try {
+      const currentSettings = profile.privacySettings || {
+        profileVisibility: (profile.visibilityPreference || 'PUBLIC') as TrustPrivacyLevel,
+        neighborhoodVisibility: 'PUBLIC',
+        historyVisibility: 'PUBLIC',
+        lineageVisibility: 'PUBLIC'
+      };
+      const updatedSettings = {
+        ...currentSettings,
+        hideAsConnector: value
+      };
+      
+      await updateDoc(doc(db, 'users', user.uid), {
+        privacySettings: updatedSettings
+      });
+    } catch (err) {
+      console.error(`Failed to update hideAsConnector:`, err);
+    } finally {
+      setUpdatingVisibility(false);
+    }
+  };
+
   const updateVisibilityPreference = async (pref: any) => {
     if (!user) return;
     setUpdatingVisibility(true);
     try {
+      const currentSettings = profile.privacySettings || {
+        profileVisibility: 'PUBLIC',
+        neighborhoodVisibility: 'PUBLIC',
+        historyVisibility: 'PUBLIC',
+        lineageVisibility: 'PUBLIC'
+      };
       await updateDoc(doc(db, 'users', user.uid), {
-        visibilityPreference: pref
+        visibilityPreference: pref,
+        privacySettings: {
+          ...currentSettings,
+          profileVisibility: pref === 'NETWORK' ? 'DEGREE_4' : pref
+        }
       });
     } catch (err) {
       console.error('Failed to update visibility:', err);
@@ -448,12 +806,15 @@ export default function Profile({
         id: doc.id,
         ...doc.data()
       })) as Item[];
-      fetched.sort((a, b) => {
+      // [ALPHA] Filter out shelved types — IMECE and MISSION are distinct from JOIN
+      const SHELVED_TYPES = ['IMECE', 'MISSION'];
+      const activeJoined = fetched.filter(item => !SHELVED_TYPES.includes(item.type));
+      activeJoined.sort((a, b) => {
          const timeA = a.createdAt?.toMillis?.() || 0;
          const timeB = b.createdAt?.toMillis?.() || 0;
          return timeB - timeA;
       });
-      setJoinedImece(fetched);
+      setJoinedImece(activeJoined);
       setLoadingJoined(false);
     }, (err) => {
       console.error('Error fetching joined imece:', err);
@@ -499,6 +860,7 @@ export default function Profile({
     setAcceptingVouchId(vouchId);
     try {
       await updateDoc(doc(db, 'vouches', vouchId), { status: 'ACCEPTED' });
+      clearTrustGraphCache();
       // Notify sender
       await addDoc(collection(db, 'notifications'), {
         userId: fromUserId,
@@ -593,6 +955,412 @@ export default function Profile({
                       {updatingName ? '...' : 'Set'}
                     </button>
                   </div>
+                </div>
+
+                {/* ── Address Book ── */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-stone-800">
+                      <MapPin size={18} className="text-stone-400" />
+                      <h4 className="font-bold text-sm uppercase tracking-widest">Address Book</h4>
+                    </div>
+                    <button
+                      onClick={() => setShowAddLocation(!showAddLocation)}
+                      className={`p-2 rounded-xl transition-all ${
+                        showAddLocation
+                          ? 'bg-stone-900 text-white rotate-45'
+                          : 'bg-stone-100 text-stone-500 hover:bg-stone-200'
+                      }`}
+                    >
+                      <Plus size={16} />
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-stone-400 font-medium leading-relaxed">
+                    Save locations to quickly pin posts. Each location gets its own randomized privacy circle.
+                  </p>
+
+                  {/* Existing saved locations */}
+                  {savedLocations.length > 0 ? (
+                    <div className="space-y-2">
+                      {savedLocations.map(loc => (
+                        <div
+                          key={loc.id}
+                          className={`p-3 rounded-2xl border-2 transition-all ${
+                            loc.isDefault
+                              ? 'border-brand/30 bg-brand/5'
+                              : 'border-stone-100 bg-stone-50'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black ${
+                              loc.isDefault
+                                ? 'bg-brand text-white'
+                                : 'bg-stone-200 text-stone-500'
+                            }`}>
+                              {loc.label.startsWith('Home') ? '🏠' : loc.label === 'Work' ? '💼' : loc.label.charAt(0).toUpperCase()}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-xs font-bold text-stone-800 flex items-center gap-1.5">
+                                {loc.label}
+                                {loc.isDefault && (
+                                  <span className="text-[7px] bg-brand/10 text-brand px-1.5 py-0.5 rounded-full font-black uppercase">Default</span>
+                                )}
+                              </div>
+                              <div className="text-[9px] text-stone-400 font-medium">
+                                {loc.neighborhoodRadius >= 1000
+                                  ? `${loc.neighborhoodRadius / 1000}km privacy zone`
+                                  : `${loc.neighborhoodRadius}m privacy zone`
+                                }
+                              </div>
+                              {loc.label.startsWith('Home (') && loc.label.endsWith(')') && (
+                                <div className="mt-1 text-[8px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded-md w-fit font-bold flex items-center gap-1">
+                                  <MapPin size={10} className="text-amber-600" />
+                                  <span>General area — Edit to specify address</span>
+                                </div>
+                              )}
+                            </div>
+                            {confirmDeleteId === loc.id ? (
+                              <div className="flex items-center gap-1.5 animate-in fade-in zoom-in-95 duration-150">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    removeSavedLocation(loc.id);
+                                    setConfirmDeleteId(null);
+                                  }}
+                                  className="px-2 py-1 bg-red-500 hover:bg-red-650 text-white text-[8px] font-black rounded-lg uppercase tracking-wider transition-colors"
+                                >
+                                  Delete
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setConfirmDeleteId(null);
+                                  }}
+                                  className="px-2 py-1 bg-stone-150 hover:bg-stone-200 text-stone-600 text-[8px] font-black rounded-lg uppercase tracking-wider transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1">
+                                {!loc.isDefault && (
+                                  <button
+                                    onClick={() => setDefaultLocation(loc.id)}
+                                    className="p-1.5 text-stone-300 hover:text-brand transition-colors" title="Set as default"
+                                  >
+                                    <Home size={14} />
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => {
+                                    if (editingLocationId === loc.id) {
+                                      setEditingLocationId(null);
+                                    } else {
+                                      setEditingLocationId(loc.id);
+                                      setEditingLocLabel(loc.label);
+                                      setEditingLocLat(loc.exactLocation.lat.toString());
+                                      setEditingLocLng(loc.exactLocation.lng.toString());
+                                      setEditingLocRadius(loc.neighborhoodRadius);
+                                      setEditingPreviewCenter(loc.neighborhoodCenter);
+                                    }
+                                  }}
+                                  className="p-1.5 text-stone-300 hover:text-stone-600 transition-colors" title="Edit Location"
+                                >
+                                  <Settings size={14} />
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setConfirmDeleteId(loc.id);
+                                  }}
+                                  className="p-1.5 text-stone-300 hover:text-red-500 transition-colors" title="Remove"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Expandable address/radius editor */}
+                          {editingLocationId === loc.id && (
+                            <div className="mt-3 pt-3 border-t border-stone-100 space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
+                              <div className="space-y-1 text-left">
+                                <label className="text-[8px] font-bold text-stone-400 uppercase">Label</label>
+                                <input
+                                  type="text"
+                                  value={editingLocLabel}
+                                  onChange={e => setEditingLocLabel(e.target.value)}
+                                  placeholder="e.g. Home, Work, Parents..."
+                                  className="w-full bg-stone-50 border-2 border-stone-100 rounded-xl px-3 py-2 text-sm focus:border-stone-900 outline-none transition-all"
+                                />
+                              </div>
+
+                              <div className="space-y-1 text-left">
+                                <label className="text-[8px] font-bold text-stone-400 uppercase font-black">Search Address</label>
+                                <AddressAutocomplete
+                                  placeholder="Search a new address..."
+                                  onSelect={(coords, address) => {
+                                    setEditingLocLat(coords.lat.toFixed(6));
+                                    setEditingLocLng(coords.lng.toFixed(6));
+                                    // Prefill label if empty
+                                    if (!editingLocLabel.trim()) {
+                                      const shortPart = address.split(',')[0].trim();
+                                      setEditingLocLabel(shortPart);
+                                    }
+                                  }}
+                                />
+                              </div>
+
+                              <div className="text-[9px] font-bold text-stone-400 uppercase tracking-widest text-left">Privacy Radius</div>
+                              <div className="flex gap-1.5">
+                                {NEIGHBORHOOD_RADIUS_OPTIONS.map(opt => (
+                                  <button
+                                    key={opt.value}
+                                    type="button"
+                                    onClick={() => setEditingLocRadius(opt.value)}
+                                    className={`flex-1 py-2 px-1 rounded-xl text-center border transition-all ${
+                                      editingLocRadius === opt.value
+                                        ? 'bg-stone-900 text-white border-stone-900 shadow-md'
+                                        : 'bg-white text-stone-500 border-stone-200 hover:border-stone-300'
+                                    }`}
+                                  >
+                                    <div className="text-[10px] font-bold">{opt.label}</div>
+                                  </button>
+                                ))}
+                              </div>
+
+                              {/* Privacy Map Preview for Editing */}
+                              {editingLocLat && editingLocLng && editingPreviewCenter && (
+                                <div className="w-full h-40 rounded-2xl overflow-hidden border border-stone-200 shadow-sm relative bg-stone-50">
+                                  {API_KEY ? (
+                                    <Map
+                                      defaultCenter={editingPreviewCenter}
+                                      center={editingPreviewCenter}
+                                      defaultZoom={14}
+                                      gestureHandling={'cooperative'}
+                                      disableDefaultUI={true}
+                                      mapId={`profile_location_edit_${loc.id}`}
+                                      style={{ width: '100%', height: '100%' }}
+                                    >
+                                      {/* Exact address (Private) */}
+                                      <AdvancedMarker position={{ lat: parseFloat(editingLocLat), lng: parseFloat(editingLocLng) }}>
+                                        <div className="flex flex-col items-center">
+                                          <div className="bg-stone-900 text-white p-1 rounded-full shadow-md border border-white flex items-center justify-center">
+                                            <Home size={10} className="text-white" />
+                                          </div>
+                                          <div className="text-[7px] bg-stone-900 text-stone-100 font-bold px-1 py-0.5 rounded mt-0.5 shadow-sm border border-stone-800 whitespace-nowrap">
+                                            Exact Address (Private)
+                                          </div>
+                                        </div>
+                                      </AdvancedMarker>
+
+                                      {/* Neighborhood center (Public) */}
+                                      <AdvancedMarker position={editingPreviewCenter}>
+                                        <div className="flex flex-col items-center">
+                                          <div className="bg-amber-500 text-white p-1 rounded-full shadow-md border border-white flex items-center justify-center">
+                                            <MapPin size={10} className="text-white" />
+                                          </div>
+                                          <div className="text-[7px] bg-amber-500 text-white font-bold px-1 py-0.5 rounded mt-0.5 shadow-sm border border-amber-600 whitespace-nowrap">
+                                            Neighborhood Center (Public)
+                                          </div>
+                                        </div>
+                                      </AdvancedMarker>
+
+                                      {/* Connection Line */}
+                                      <MapPolyline
+                                        path={[
+                                          { lat: parseFloat(editingLocLat), lng: parseFloat(editingLocLng) },
+                                          editingPreviewCenter
+                                        ]}
+                                        strokeColor="#f59e0b"
+                                      />
+
+                                      {/* Privacy Circle */}
+                                      <MapCircle
+                                        center={editingPreviewCenter}
+                                        radius={editingLocRadius}
+                                        strokeColor="#f59e0b"
+                                        fillColor="#f59e0b"
+                                        opacity={0.15}
+                                      />
+                                    </Map>
+                                  ) : (
+                                    <div className="flex items-center justify-center h-full p-4 text-center">
+                                      <p className="text-[10px] text-stone-400 font-medium">Map Key Missing.</p>
+                                    </div>
+                                  )}
+                                  <div className="absolute bottom-2 left-2 bg-white/95 backdrop-blur-sm px-2 py-0.5 rounded-lg border border-stone-200 text-[8px] text-stone-500 font-bold shadow-sm pointer-events-none">
+                                    {editingLocRadius >= 1000 ? `${editingLocRadius / 1000} km radius` : `${editingLocRadius}m radius`}
+                                  </div>
+                                </div>
+                              )}
+
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingLocationId(null)}
+                                  className="flex-1 py-2 bg-stone-100 hover:bg-stone-200 text-stone-600 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => saveEditedLocation(loc.id)}
+                                  disabled={!editingLocLabel.trim() || !editingLocLat || !editingLocLng}
+                                  className="flex-1 py-2 bg-stone-900 hover:bg-stone-850 text-white rounded-xl text-[10px] font-black uppercase tracking-widest disabled:opacity-50 transition-colors"
+                                >
+                                  Save Changes
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="bg-stone-50 rounded-2xl p-4 border border-dashed border-stone-200 text-center">
+                      <Home size={20} className="mx-auto text-stone-300 mb-2" />
+                      <p className="text-[10px] text-stone-400 font-medium">
+                        No saved locations yet. Add your home or other places to pin posts from anywhere.
+                      </p>
+                    </div>
+                  )}
+
+                      {/* Add new location form */}
+                      {showAddLocation && (
+                        <div className="bg-white rounded-2xl p-4 border-2 border-stone-200 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                          <div className="text-[9px] font-black text-stone-400 uppercase tracking-widest">New Location</div>
+                          
+                          <div className="space-y-1">
+                            <label className="text-[8px] font-bold text-stone-400 uppercase">Label</label>
+                            <input
+                              type="text"
+                              value={newLocLabel}
+                              onChange={e => setNewLocLabel(e.target.value)}
+                              placeholder="e.g. Home, Work, Parents..."
+                              className="w-full bg-stone-50 border-2 border-stone-100 rounded-xl px-3 py-2.5 text-sm focus:border-stone-900 outline-none transition-all"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[8px] font-bold text-stone-400 uppercase font-black">Search Address</label>
+                            <AddressAutocomplete
+                              placeholder="Search address (e.g. Tempelhofer Feld)..."
+                              onSelect={(coords, address) => {
+                                setNewLocLat(coords.lat.toFixed(6));
+                                setNewLocLng(coords.lng.toFixed(6));
+                                // Prefill label if it's empty, using the main part of the address (before first comma)
+                                if (!newLocLabel.trim()) {
+                                  const shortPart = address.split(',')[0].trim();
+                                  setNewLocLabel(shortPart);
+                                }
+                              }}
+                            />
+                          </div>
+
+                      <div className="text-[9px] font-bold text-stone-400 uppercase tracking-widest">Privacy Radius</div>
+                      <div className="flex gap-1.5">
+                        {NEIGHBORHOOD_RADIUS_OPTIONS.map(opt => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => setNewLocRadius(opt.value)}
+                            className={`flex-1 py-2 px-1 rounded-xl text-center border transition-all ${
+                              newLocRadius === opt.value
+                                ? 'bg-stone-900 text-white border-stone-900 shadow-md'
+                                : 'bg-white text-stone-500 border-stone-200 hover:border-stone-300'
+                            }`}
+                          >
+                            <div className="text-[10px] font-bold">{opt.label}</div>
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Privacy Map Preview */}
+                      {newLocLat && newLocLng && previewCenter ? (
+                        <div className="w-full h-44 rounded-2xl overflow-hidden border border-stone-200 shadow-sm relative bg-stone-50">
+                          {API_KEY ? (
+                            <Map
+                              defaultCenter={previewCenter}
+                              defaultZoom={14}
+                              gestureHandling={'cooperative'}
+                              disableDefaultUI={true}
+                              mapId="profile_location_preview"
+                              style={{ width: '100%', height: '100%' }}
+                            >
+                              {/* Exact address (Private) */}
+                              <AdvancedMarker position={{ lat: parseFloat(newLocLat), lng: parseFloat(newLocLng) }}>
+                                <div className="flex flex-col items-center">
+                                  <div className="bg-stone-900 text-white p-1 rounded-full shadow-md border border-white flex items-center justify-center">
+                                    <Home size={10} className="text-white" />
+                                  </div>
+                                  <div className="text-[7px] bg-stone-900 text-stone-100 font-bold px-1 py-0.5 rounded mt-0.5 shadow-sm border border-stone-800 whitespace-nowrap">
+                                    Exact Address (Private)
+                                  </div>
+                                </div>
+                              </AdvancedMarker>
+
+                              {/* Neighborhood center (Public) */}
+                              <AdvancedMarker position={previewCenter}>
+                                <div className="flex flex-col items-center">
+                                  <div className="bg-amber-500 text-white p-1 rounded-full shadow-md border border-white flex items-center justify-center">
+                                    <MapPin size={10} className="text-white" />
+                                  </div>
+                                  <div className="text-[7px] bg-amber-500 text-white font-bold px-1 py-0.5 rounded mt-0.5 shadow-sm border border-amber-600 whitespace-nowrap">
+                                    Neighborhood Center (Public)
+                                  </div>
+                                </div>
+                              </AdvancedMarker>
+
+                              {/* Connection Line */}
+                              <MapPolyline
+                                path={[
+                                  { lat: parseFloat(newLocLat), lng: parseFloat(newLocLng) },
+                                  previewCenter
+                                ]}
+                                strokeColor="#f59e0b"
+                              />
+
+                              {/* Privacy Circle */}
+                              <MapCircle
+                                center={previewCenter}
+                                radius={newLocRadius}
+                                strokeColor="#f59e0b"
+                                fillColor="#f59e0b"
+                                opacity={0.15}
+                              />
+                            </Map>
+                          ) : (
+                            <div className="flex items-center justify-center h-full p-4 text-center">
+                              <p className="text-[10px] text-stone-400 font-medium">Map Key Missing. Preview Unavailable.</p>
+                            </div>
+                          )}
+                          <div className="absolute bottom-2 left-2 bg-white/95 backdrop-blur-sm px-2 py-0.5 rounded-lg border border-stone-200 text-[8px] text-stone-500 font-bold shadow-sm pointer-events-none">
+                            {newLocRadius >= 1000 ? `${newLocRadius / 1000} km radius` : `${newLocRadius}m radius`}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="bg-stone-50 rounded-2xl p-5 border border-stone-100 flex flex-col items-center justify-center text-center">
+                          <MapPin size={20} className="text-stone-300 mb-2 animate-bounce" />
+                          <p className="text-[9px] text-stone-400 font-black uppercase tracking-widest">
+                            Search for an address to preview map
+                          </p>
+                          <p className="text-[8px] text-stone-400 mt-1 max-w-[190px] leading-relaxed">
+                            Your address will be offset randomly within this privacy boundary.
+                          </p>
+                        </div>
+                      )}
+
+
+                      <button
+                        onClick={addSavedLocation}
+                        disabled={savingLocation || !newLocLabel.trim() || !newLocLat || !newLocLng}
+                        className="w-full py-3 bg-stone-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest disabled:opacity-50 transition-all"
+                      >
+                        {savingLocation ? 'Saving...' : 'Save Location'}
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-4">
@@ -740,45 +1508,101 @@ export default function Profile({
                   </div>
                 </div>
 
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2 text-stone-800">
-                    <Shield size={18} className="text-stone-400" />
-                    <h4 className="font-bold text-sm uppercase tracking-widest">Network Privacy</h4>
+                <div className="space-y-6 bg-stone-50 border border-stone-200/80 p-5 rounded-[2rem]">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 rounded-2xl bg-amber-50 text-[#C25E3B] border border-amber-100">
+                      <Shield size={22} />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-sm uppercase tracking-widest text-stone-800 leading-none mb-1">Privacy Center</h4>
+                      <p className="text-[10px] text-stone-400 font-medium">Fine-tune your trust-network boundaries.</p>
+                    </div>
                   </div>
-                  <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest leading-none">
-                    Who can see your profile and posts?
-                  </p>
-                  <div className="grid grid-cols-1 gap-2">
+
+                  <div className="grid grid-cols-1 gap-4">
                     {[
-                      { id: 'PUBLIC', title: 'Public (Anyone)', desc: 'Anyone on the app can see you' },
-                      { id: 'NETWORK', title: 'Network Only', desc: 'Anyone connected to you through the trust network' },
-                      { id: 'DEGREE_4', title: '4th Degree', desc: 'Friends of friends of friends of friends' },
-                      { id: 'DEGREE_3', title: '3rd Degree', desc: 'Friends of friends of friends' },
-                      { id: 'DEGREE_2', title: '2nd Degree', desc: 'Friends of friends' },
-                      { id: 'DEGREE_1', title: '1st Degree', desc: 'Only your direct connections' }
-                    ].map(option => (
-                      <button
-                        key={option.id}
-                        onClick={() => updateVisibilityPreference(option.id)}
-                        disabled={updatingVisibility}
-                        className={`p-4 rounded-2xl border-2 flex items-center gap-4 transition-all text-left ${
-                          (profile.visibilityPreference || 'PUBLIC') === option.id
-                            ? 'border-indigo-600 bg-indigo-600 text-white shadow-md'
-                            : 'border-stone-50 bg-stone-50 text-stone-500 hover:border-stone-200'
-                        }`}
-                      >
+                      {
+                        key: 'profileVisibility',
+                        title: 'Profile Visibility',
+                        desc: 'Who can see your bio, contact handles, and active trust mosaic.',
+                        icon: User
+                      },
+                      {
+                        key: 'neighborhoodVisibility',
+                        title: 'Neighborhood Map',
+                        desc: 'Who can see your neighborhood center pin and distance indicators.',
+                        icon: MapPin
+                      },
+                      {
+                        key: 'historyVisibility',
+                        title: 'Gratitude & History',
+                        desc: 'Who can see your past exchanges, reviews, and vouch footprint.',
+                        icon: Heart
+                      },
+                      {
+                        key: 'lineageVisibility',
+                        title: 'Lineage Tree',
+                        desc: 'Who can trace your invitations upwards or downwards in the chain.',
+                        icon: Network
+                      }
+                    ].map(setting => {
+                      const currentVal = (profile.privacySettings?.[setting.key as keyof UserPrivacySettings] || 
+                        (setting.key === 'profileVisibility' ? (profile.visibilityPreference || 'PUBLIC') : 'PUBLIC')) as string;
+                      
+                      return (
+                        <div key={setting.key} className="bg-white p-4 rounded-2xl border border-stone-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                          <div className="flex gap-3 items-start sm:items-center">
+                            <div className="p-2 rounded-xl bg-stone-50 text-stone-600 border border-stone-100 mt-1 sm:mt-0">
+                              <setting.icon size={18} />
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-[11px] font-bold text-stone-800 uppercase tracking-widest leading-none mb-1">{setting.title}</span>
+                              <span className="text-[10px] text-stone-400 font-medium leading-tight max-w-[280px]">{setting.desc}</span>
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center gap-1">
+                            <select
+                              value={currentVal}
+                              onChange={(e) => updatePrivacySetting(setting.key as any, e.target.value as any)}
+                              disabled={updatingVisibility}
+                              className="px-3 py-2 bg-stone-50 border border-stone-200 text-stone-700 rounded-xl text-[10px] font-bold uppercase tracking-wider outline-none focus:border-stone-900 focus:bg-white transition-all cursor-pointer"
+                            >
+                              <option value="PRIVATE">Private</option>
+                              <option value="DEGREE_1">1st Connection</option>
+                              <option value="DEGREE_2">2nd Connection</option>
+                              <option value="DEGREE_3">3rd Connection</option>
+                              <option value="DEGREE_4">4th Connection</option>
+                              <option value="PUBLIC">Public</option>
+                            </select>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    <div className="bg-white p-4 rounded-2xl border border-stone-100 flex items-center justify-between gap-4">
+                      <div className="flex gap-3 items-center">
+                        <div className="p-2 rounded-xl bg-stone-50 text-stone-600 border border-stone-100">
+                          <EyeOff size={18} />
+                        </div>
                         <div className="flex flex-col">
-                          <span className="text-[10px] font-black uppercase tracking-widest leading-none mb-1">{option.title}</span>
-                          <span className={`text-[9px] font-medium leading-tight ${
-                            (profile.visibilityPreference || 'PUBLIC') === option.id
-                              ? 'text-white/80'
-                              : 'text-stone-400'
-                          }`}>
-                            {option.desc}
+                          <span className="text-[11px] font-bold text-stone-800 uppercase tracking-widest leading-none mb-1">Hide as Connector</span>
+                          <span className="text-[10px] text-stone-400 font-medium leading-tight max-w-[280px]">
+                            Hide your name in connection paths between 3rd+ degree neighbors. You will show as "Hidden".
                           </span>
                         </div>
-                      </button>
-                    ))}
+                      </div>
+                      
+                      <div className="flex items-center">
+                        <input
+                          type="checkbox"
+                          checked={!!profile.privacySettings?.hideAsConnector}
+                          onChange={(e) => updateHideAsConnector(e.target.checked)}
+                          disabled={updatingVisibility}
+                          className="w-4 h-4 text-stone-900 border-stone-300 rounded focus:ring-stone-900 cursor-pointer accent-stone-900"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -856,7 +1680,7 @@ export default function Profile({
               </>
             ) : (
               <>
-                <MapPin size={12} className="text-[--color-brand]" />
+                <MapPin size={12} className="text-brand" />
                 <span>Local Neighbor</span>
               </>
             )}
@@ -949,6 +1773,7 @@ export default function Profile({
           <PublicProfile
             userId={selectedVouchProfile}
             onClose={() => setSelectedVouchProfile(null)}
+            onNavigateToChat={onNavigateToChat}
           />
         )}
 
@@ -1133,8 +1958,6 @@ export default function Profile({
             {[
               { id: 'SHARE', label: 'My Giveaways' },
               { id: 'ASK', label: 'My Needs' },
-              { id: 'IMECE', label: 'My İmece' },
-              { id: 'MISSION', label: 'My Missions' },
               { id: 'JOIN', label: 'My Joins' }
             ].map(opt => (
               <button 
@@ -1158,7 +1981,7 @@ export default function Profile({
               ))
             ) : (
               <div className="py-10 text-center text-stone-400 font-serif italic text-sm border-2 border-dashed border-stone-100 rounded-[2rem]">
-                No {filter === 'SHARE' ? 'giveaways' : filter === 'ASK' ? 'needs' : filter === 'IMECE' ? 'İmece posts' : filter === 'JOIN' ? 'joins' : 'missions'} created yet.
+                No {filter === 'SHARE' ? 'giveaways' : filter === 'ASK' ? 'needs' : 'joins'} created yet.
               </div>
             )}
           </div>
@@ -1180,7 +2003,7 @@ export default function Profile({
           className="w-full py-4 border-2 border-stone-200 rounded-3xl text-red-500 font-bold text-xs uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-red-50 hover:border-red-200 transition-all mb-20"
         >
           <LogOut size={16} />
-          Leave the journey
+          Log Out
         </button>
       </div>
     </div>

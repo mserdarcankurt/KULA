@@ -59,10 +59,27 @@ export function useUnreadCount() {
       where('userId', '==', user.uid),
       where('isRead', '==', false)
     );
+    let isInitialLoad = true;
+
     unsubs.push(
       onSnapshot(notifQ, (snapshot) => {
         // The count IS the number of matching documents
         setUnreadNotifications(snapshot.docs.length);
+
+        if (!isInitialLoad) {
+          snapshot.docChanges().forEach((change) => {
+            if (change.type === 'added') {
+              const notifData = change.doc.data();
+              import('../lib/pushService').then(({ showLocalNotification }) => {
+                showLocalNotification(
+                  notifData.type === 'new_message' ? 'New Message' : 'KULA Alert',
+                  notifData.content || ''
+                );
+              });
+            }
+          });
+        }
+        isInitialLoad = false;
       }, (error) => {
         // Route errors through the centralized handler (firebase.ts)
         handleFirestoreError(error, OperationType.LIST, 'notifications');

@@ -48,7 +48,14 @@
   --color-brand-light: #f5f5f0;
 }
 
-/* Apply the warm, earthy defaults to the entire page */
+/* Apply the warm, earthy defaults to the entire page and prevent document bouncing */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 body {
   @apply font-sans bg-[--color-brand-light] text-stone-900;
 }

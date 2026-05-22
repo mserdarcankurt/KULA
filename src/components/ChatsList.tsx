@@ -33,12 +33,13 @@
  */
 import React, { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, query, where, onSnapshot, orderBy, doc, getDoc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, doc, getDoc, updateDoc, arrayUnion, arrayRemove, addDoc, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from '../hooks/useAuth';
 import { Chat, UserProfile, Item } from '../types';
 import ChatRoom from './ChatRoom';
 import { MessageSquare, ArrowLeft, Clock, Tag, Archive, ArchiveRestore } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
+import { getOrCreateChat } from '../services/chatService';
 
 interface ChatsListProps {
   selectedChatId: string | null;
@@ -46,10 +47,13 @@ interface ChatsListProps {
 }
 
 export default function ChatsList({ selectedChatId, onSelectChat }: ChatsListProps) {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const [chats, setChats] = useState<Chat[]>([]);
   const [loading, setLoading] = useState(true);
   const [showArchived, setShowArchived] = useState(false);
+  const [hostProfile, setHostProfile] = useState<UserProfile | null>(null);
+  const [loadingHost, setLoadingHost] = useState(false);
+  const [sendingGreeting, setSendingGreeting] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -79,6 +83,68 @@ export default function ChatsList({ selectedChatId, onSelectChat }: ChatsListPro
 
     return unsubscribe;
   }, [user]);
+
+  useEffect(() => {
+    if (!profile?.hostId || chats.length > 0) {
+      setHostProfile(null);
+      return;
+    }
+
+    setLoadingHost(true);
+    getDoc(doc(db, 'users', profile.hostId))
+      .then((snap) => {
+        if (snap.exists()) {
+          setHostProfile(snap.data() as UserProfile);
+        }
+      })
+      .catch((err) => {
+        console.error('Error fetching host profile:', err);
+      })
+      .finally(() => {
+        setLoadingHost(false);
+      });
+  }, [profile?.hostId, chats.length]);
+
+  const handleSendGreeting = async () => {
+    if (!user || !profile?.hostId || !hostProfile) return;
+    setSendingGreeting(true);
+
+    try {
+      // 1. Get or create the chat room with the host
+      const chatId = await getOrCreateChat(user.uid, profile.hostId);
+
+      const hostFirstName = hostProfile.displayName ? hostProfile.displayName.split(' ')[0] : 'Neighbor';
+      const greetingText = `👋 Hey ${hostFirstName}! Thanks for the invite to Kula. Excited to join the neighborhood!`;
+
+      // 2. Add the greeting message to the subcollection chats/{chatId}/messages
+      const msgData = {
+        chatId,
+        senderId: user.uid,
+        senderName: profile?.displayName || 'Neighbor',
+        text: greetingText,
+        type: 'TEXT',
+        createdAt: serverTimestamp(),
+        chatType: 'DIRECT',
+        participants: [user.uid, profile.hostId],
+        circleId: null
+      };
+      await addDoc(collection(db, 'chats', chatId, 'messages'), msgData);
+
+      // 3. Update the chat document preview metadata
+      await updateDoc(doc(db, 'chats', chatId), {
+        lastMessage: greetingText,
+        updatedAt: serverTimestamp(),
+        unreadBy: [profile.hostId]
+      });
+
+      // 4. Select the chat to navigate to the ChatRoom
+      onSelectChat(chatId);
+    } catch (err) {
+      console.error('Error sending host greeting:', err);
+    } finally {
+      setSendingGreeting(false);
+    }
+  };
 
   const toggleArchive = async (e: React.MouseEvent, chatId: string, isArchived: boolean) => {
     e.stopPropagation();
@@ -115,7 +181,7 @@ export default function ChatsList({ selectedChatId, onSelectChat }: ChatsListPro
     <div className="h-full flex flex-col pt-4">
       <div className="px-6 mb-6 flex items-end justify-between">
         <div className="space-y-1">
-          <h2 className="serif text-3xl font-bold text-[--color-brand]">
+          <h2 className="serif text-3xl font-bold text-brand">
             {showArchived ? 'Archived' : 'Connections'}
           </h2>
           <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest italic">
@@ -154,6 +220,64 @@ export default function ChatsList({ selectedChatId, onSelectChat }: ChatsListPro
               </button>
             </div>
           ))
+        ) : !showArchived && (loadingHost || hostProfile) ? (
+          loadingHost ? (
+            <div className="p-6 bg-[#FDFBF9] border border-stone-100 rounded-[2rem] shadow-sm animate-pulse space-y-4 max-w-md mx-auto mt-4">
+              <div className="flex items-center gap-4">
+                <div className="w-14 h-14 bg-stone-100 rounded-2xl" />
+                <div className="space-y-2 flex-1">
+                  <div className="h-4 bg-stone-100 rounded w-1/3" />
+                  <div className="h-3 bg-stone-100 rounded w-1/2" />
+                </div>
+              </div>
+              <div className="h-10 bg-stone-100 rounded-xl w-full" />
+            </div>
+          ) : hostProfile ? (
+            <div className="p-6 bg-[#FDFBF9] border border-stone-100 rounded-[2rem] shadow-sm text-center md:text-left space-y-6 max-w-md mx-auto mt-4">
+              <div className="flex flex-col md:flex-row items-center gap-4">
+                <div className="w-16 h-16 bg-stone-100 rounded-2xl flex-shrink-0 overflow-hidden border border-stone-200/60 relative mx-auto md:mx-0">
+                  {hostProfile.photoURL ? (
+                    <img referrerPolicy="no-referrer" src={hostProfile.photoURL} alt={hostProfile.displayName} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-stone-400 font-bold text-xl bg-stone-50">
+                      {hostProfile.displayName?.charAt(0)}
+                    </div>
+                  )}
+                </div>
+                <div className="space-y-1">
+                  <h3 className="serif text-xl font-bold text-stone-850">Welcome to Kula!</h3>
+                  <p className="text-sm text-stone-500">
+                    You were invited by <span className="font-semibold text-stone-700">{hostProfile.displayName}</span>
+                  </p>
+                </div>
+              </div>
+              
+              <p className="text-sm text-stone-600 leading-relaxed text-center md:text-left">
+                Send a friendly greeting to thank them for the invite and start connecting with your neighborhood circle.
+              </p>
+
+              <button
+                disabled={sendingGreeting}
+                onClick={handleSendGreeting}
+                className="w-full text-left p-4 bg-white border border-stone-200/80 hover:border-stone-400 rounded-2xl hover:bg-stone-50/50 active:bg-stone-50 transition-all shadow-sm flex items-start gap-3 group relative disabled:opacity-50"
+              >
+                <span className="text-xl select-none pt-0.5">👋</span>
+                <div className="flex-1 space-y-1">
+                  <span className="text-[10px] text-stone-400 font-bold uppercase tracking-wider block">Say Hello</span>
+                  <p className="text-stone-700 text-sm leading-snug pr-6 italic">
+                    "Hey {hostProfile.displayName ? hostProfile.displayName.split(' ')[0] : 'Neighbor'}! Thanks for the invite to Kula. Excited to join the neighborhood!"
+                  </p>
+                </div>
+                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-stone-400 group-hover:text-stone-700 transition-colors">
+                  {sendingGreeting ? (
+                    <span className="inline-block w-4 h-4 border-2 border-stone-300 border-t-stone-600 rounded-full animate-spin" />
+                  ) : (
+                    '→'
+                  )}
+                </span>
+              </button>
+            </div>
+          ) : null
         ) : (
           <div className="text-center py-20 space-y-4">
             <div className="w-16 h-16 bg-stone-50 rounded-full flex items-center justify-center mx-auto text-stone-300">
@@ -205,7 +329,7 @@ function ChatPreview({ chat, currentUserId, onClick }: ChatPreviewProps) {
       
       <div className="flex-1 text-left pt-1 relative">
         <div className="flex justify-between items-baseline">
-          <h4 className={`font-bold transition-colors ${isUnread ? 'text-[--color-brand]' : 'text-stone-800'}`}>
+          <h4 className={`font-bold transition-colors ${isUnread ? 'text-brand' : 'text-stone-800'}`}>
             {otherUser?.displayName || 'Loading...'}
           </h4>
           <div className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-tighter text-stone-400">
@@ -220,7 +344,7 @@ function ChatPreview({ chat, currentUserId, onClick }: ChatPreviewProps) {
             {chat.lastMessage || 'Start a conversation...'}
           </p>
           {isUnread && (
-            <div className="w-2.5 h-2.5 bg-[--color-brand] rounded-full flex-shrink-0 ml-2" />
+            <div className="w-2.5 h-2.5 bg-brand rounded-full flex-shrink-0 ml-2" />
           )}
         </div>
       </div>

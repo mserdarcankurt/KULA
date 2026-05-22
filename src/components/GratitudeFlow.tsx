@@ -37,6 +37,7 @@ interface GratitudeFlowProps {
   recipientPhoto?: string;
   itemId: string;
   itemTitle: string;
+  itemType?: 'ASK' | 'SHARE' | 'JOIN' | string; // for per-type trust counter
   onClose: () => void;
   onComplete: () => void;
 }
@@ -49,6 +50,7 @@ export default function GratitudeFlow({
   recipientPhoto,
   itemId,
   itemTitle,
+  itemType,
   onClose,
   onComplete
 }: GratitudeFlowProps) {
@@ -78,15 +80,38 @@ export default function GratitudeFlow({
 
       // Increment the recipient's exchange count
       const recipientRef = doc(db, 'users', recipientId);
-      await updateDoc(recipientRef, {
+      const recipientUpdate: any = {
         'trustMosaic.completedExchanges': increment(1)
-      });
+      };
+      // Per-type counter for the new TrustMosaic display
+      if (itemType === 'ASK') {
+        recipientUpdate['trustMosaic.completedAsks'] = increment(1);
+      } else if (itemType === 'SHARE') {
+        recipientUpdate['trustMosaic.completedShares'] = increment(1);
+      } else if (itemType === 'JOIN' || itemType === 'IMECE' || itemType === 'MISSION') {
+        recipientUpdate['trustMosaic.completedJoins'] = increment(1);
+        if (itemType === 'IMECE') {
+          recipientUpdate['trustMosaic.imeceParticipations'] = increment(1);
+        }
+      }
+      await updateDoc(recipientRef, recipientUpdate);
 
       // Also increment our own exchange count
       const myRef = doc(db, 'users', user.uid);
-      await updateDoc(myRef, {
+      const myUpdate: any = {
         'trustMosaic.completedExchanges': increment(1)
-      });
+      };
+      if (itemType === 'ASK') {
+        myUpdate['trustMosaic.completedAsks'] = increment(1);
+      } else if (itemType === 'SHARE') {
+        myUpdate['trustMosaic.completedShares'] = increment(1);
+      } else if (itemType === 'JOIN' || itemType === 'IMECE' || itemType === 'MISSION') {
+        myUpdate['trustMosaic.completedJoins'] = increment(1);
+        if (itemType === 'IMECE') {
+          myUpdate['trustMosaic.imeceParticipations'] = increment(1);
+        }
+      }
+      await updateDoc(myRef, myUpdate);
 
       setDone(true);
       setTimeout(() => {

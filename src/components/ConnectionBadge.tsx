@@ -32,7 +32,7 @@
 import React, { useState, useEffect } from 'react';
 import { getDegreesOfSeparation } from '../lib/trustGraph';
 import { useAuth } from '../hooks/useAuth';
-import { Share2 } from 'lucide-react';
+import { Share2, Info } from 'lucide-react';
 
 interface ConnectionBadgeProps {
   targetUserId: string;
@@ -44,6 +44,7 @@ export default function ConnectionBadge({ targetUserId, className = "", showLine
   const { user } = useAuth();
   const [data, setData] = useState<{ degrees: number | null; via?: string; fullChain?: string[] } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showTooltip, setShowTooltip] = useState(false);
 
   useEffect(() => {
     if (!user || !targetUserId || user.uid === targetUserId) {
@@ -74,29 +75,57 @@ export default function ConnectionBadge({ targetUserId, className = "", showLine
   if (loading || !data || data.degrees === null) return null;
 
   const config = {
-    1: { label: '1st Degree', color: 'text-emerald-600', bg: 'bg-emerald-50', dots: '●─●' },
-    2: { label: '2nd Degree', color: 'text-blue-600', bg: 'bg-blue-50', dots: '●─●─●' },
-    3: { label: '3rd Degree', color: 'text-amber-600', bg: 'bg-amber-50', dots: '●─●─●─●' },
-    default: { label: `${data.degrees} Degrees`, color: 'text-stone-500', bg: 'bg-stone-50', dots: '● ... ●' }
+    1: { label: '1st Degree', color: 'text-[#3D5A40]', bg: 'bg-[#E8EFE9]', border: 'border-[#D1DFD3]', dots: '●──●' },
+    2: { label: '2nd Degree', color: 'text-[#A0522D]', bg: 'bg-[#FDF5E6]', border: 'border-[#F5DEB3]', dots: '●──●──●' },
+    3: { label: '3rd Degree', color: 'text-[#B38F4F]', bg: 'bg-[#FAF6EE]', border: 'border-[#EEDCA5]', dots: '●──●──●──●' },
+    default: { label: `${data.degrees} Degrees`, color: 'text-[#5C5C5C]', bg: 'bg-[#F7F6F2]', border: 'border-[#E8E7E3]', dots: '● ── ●' }
   };
 
   const style = config[data.degrees as keyof typeof config] || config.default;
 
+  const getTooltipText = () => {
+    if (!data) return '';
+    if (data.degrees === 1) {
+      return "Direct connection. You either invited them, they invited you, or you have vouched for each other.";
+    }
+    if (data.degrees === 2 && data.via) {
+      return `Friend of a friend. You are connected to them through ${data.via.split(' ')[0]}.`;
+    }
+    const chainString = data.fullChain 
+      ? data.fullChain.map((n, idx) => (idx === 0 ? 'You' : n.split(' ')[0])).join(' ➔ ')
+      : '';
+    return `Connected via trust chain: ${chainString || `${data.degrees} hops away`}.`;
+  };
+
   return (
     <div className={`inline-flex flex-col items-center gap-2 ${className}`}>
-      <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full ${style.bg} ${style.color} border border-current border-opacity-10`}>
+      <div 
+        onClick={(e) => {
+          e.stopPropagation();
+          setShowTooltip(!showTooltip);
+        }}
+        className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full ${style.bg} ${style.color} border ${style.border} cursor-pointer hover:opacity-90 transition-all relative`}
+      >
         <span className="font-mono text-[8px] tracking-tight font-bold">{style.dots}</span>
         <span className="text-[9px] font-black uppercase tracking-widest">{style.label}</span>
+        <Info size={10} className="opacity-70 hover:opacity-100 transition-opacity ml-0.5" />
+
+        {showTooltip && (
+          <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 z-[99] bg-stone-900 text-stone-100 text-[10px] leading-relaxed p-3 rounded-2xl shadow-xl border border-stone-800 w-52 text-center normal-case font-medium">
+            <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-stone-900 rotate-45 border-t border-l border-stone-800" />
+            {getTooltipText()}
+          </div>
+        )}
       </div>
       {showLineage && data.fullChain && data.fullChain.length > 1 ? (
-        <div className="flex flex-wrap items-center justify-center gap-1.5 text-[10px] text-stone-500 font-bold mt-1 bg-stone-50 px-3 py-1.5 rounded-xl border border-stone-100">
+        <div className="flex flex-wrap items-center justify-center gap-1.5 text-[9px] font-black uppercase tracking-widest text-[#7A6D55] mt-2 bg-[#FAF7F0] px-4 py-2 rounded-2xl border border-[#E8E2D2] shadow-sm">
           {data.fullChain.map((name, idx) => (
             <React.Fragment key={idx}>
-              <span className={idx === 0 ? 'text-[--color-brand]' : idx === data.fullChain!.length - 1 ? 'text-stone-900' : ''}>
+              <span className={idx === 0 ? 'text-stone-400 font-medium normal-case' : idx === data.fullChain!.length - 1 ? 'text-[#5B6B56] font-black' : 'text-stone-600 font-bold'}>
                 {idx === 0 ? 'You' : name.split(' ')[0]}
               </span>
               {idx < data.fullChain!.length - 1 && (
-                <span className="text-stone-300 font-mono">➔</span>
+                <span className="text-stone-300 font-mono font-normal">➔</span>
               )}
             </React.Fragment>
           ))}

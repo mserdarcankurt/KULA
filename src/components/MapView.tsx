@@ -26,7 +26,7 @@
  *   with instructions. The app still works — users just can't see the map view.
  */
 import React, { useState, useEffect } from 'react';
-import { APIProvider, Map, AdvancedMarker, Pin, InfoWindow, useAdvancedMarkerRef } from '@vis.gl/react-google-maps';
+import { Map, AdvancedMarker, Pin, InfoWindow, useAdvancedMarkerRef } from '@vis.gl/react-google-maps';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Item } from '../types';
@@ -43,20 +43,21 @@ interface MapViewProps {
 
 interface MarkerWithInfoWindowProps {
   item: Item;
-  key?: string | number;
+  isOpen: boolean;
+  onOpen: () => void;
+  onClose: () => void;
   onItemClick?: (item: Item) => void;
 }
 
-function MarkerWithInfoWindow({ item, onItemClick }: MarkerWithInfoWindowProps) {
+function MarkerWithInfoWindow({ item, isOpen, onOpen, onClose, onItemClick }: MarkerWithInfoWindowProps) {
   const [markerRef, marker] = useAdvancedMarkerRef();
-  const [open, setOpen] = useState(false);
 
   return (
     <>
       <AdvancedMarker
         ref={markerRef}
         position={item.location}
-        onClick={() => setOpen(true)}
+        onClick={onOpen}
       >
         <Pin 
           background={item.type === 'SHARE' ? '#10b981' : '#f59e0b'} 
@@ -64,8 +65,8 @@ function MarkerWithInfoWindow({ item, onItemClick }: MarkerWithInfoWindowProps) 
           borderColor="#fff"
         />
       </AdvancedMarker>
-      {open && (
-        <InfoWindow anchor={marker} onCloseClick={() => setOpen(false)}>
+      {isOpen && marker && (
+        <InfoWindow anchor={marker} onCloseClick={onClose}>
           <div className="p-2 max-w-[200px]" onClick={() => onItemClick?.(item)} style={{ cursor: onItemClick ? 'pointer' : 'default' }}>
             <div className="flex items-center gap-2 mb-1">
               <span className={`text-[8px] font-black px-2 py-0.5 rounded-full text-white ${
@@ -85,7 +86,13 @@ function MarkerWithInfoWindow({ item, onItemClick }: MarkerWithInfoWindowProps) 
               </div>
             )}
             <p className="text-[10px] text-stone-500 line-clamp-2 italic mb-2">"{item.description}"</p>
-            <button className="w-full py-1.5 bg-stone-900 text-white text-[10px] font-bold rounded-lg uppercase tracking-widest">
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                onItemClick?.(item);
+              }}
+              className="w-full py-1.5 bg-stone-900 text-white text-[10px] font-bold rounded-lg uppercase tracking-widest"
+            >
               View Detail
             </button>
           </div>
@@ -96,6 +103,8 @@ function MarkerWithInfoWindow({ item, onItemClick }: MarkerWithInfoWindowProps) 
 }
 
 export default function MapView({ items, center, onItemClick }: MapViewProps) {
+  const [openItemId, setOpenItemId] = useState<string | null>(null);
+
   if (!API_KEY) {
     return (
       <div className="flex flex-col items-center justify-center h-full p-8 text-center bg-stone-50 rounded-[3rem] border-2 border-stone-100 border-dashed">
@@ -110,20 +119,26 @@ export default function MapView({ items, center, onItemClick }: MapViewProps) {
 
   return (
     <div className="h-full w-full rounded-[2.5rem] overflow-hidden shadow-inner border-4 border-white">
-      <APIProvider apiKey={API_KEY} version="weekly">
-        <Map
-          defaultCenter={center}
-          defaultZoom={13}
-          mapId="bf50a3734cf08349"
-          disableDefaultUI={true}
-          style={{ width: '100%', height: '100%' }}
-          internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
-        >
-          {items.map(item => (
-            <MarkerWithInfoWindow key={item.id} item={item} onItemClick={onItemClick} />
-          ))}
-        </Map>
-      </APIProvider>
+      <Map
+        defaultCenter={center}
+        defaultZoom={13}
+        mapId="bf50a3734cf08349"
+        disableDefaultUI={true}
+        style={{ width: '100%', height: '100%' }}
+        onClick={() => setOpenItemId(null)}
+        internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
+      >
+        {items.map(item => (
+          <MarkerWithInfoWindow 
+            key={item.id} 
+            item={item} 
+            isOpen={openItemId === item.id}
+            onOpen={() => setOpenItemId(item.id)}
+            onClose={() => setOpenItemId(null)}
+            onItemClick={onItemClick} 
+          />
+        ))}
+      </Map>
     </div>
   );
 }

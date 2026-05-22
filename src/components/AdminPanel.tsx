@@ -115,7 +115,7 @@ export default function AdminPanel() {
         <section>
           <h3 className="serif text-xl font-bold mb-4">Community Activity</h3>
           <div className="grid grid-cols-2 gap-4">
-            <div className="p-6 bg-[--color-brand] text-white rounded-3xl text-center space-y-1">
+            <div className="p-6 bg-brand text-white rounded-3xl text-center space-y-1">
               <span className="text-3xl font-black">{users.length}</span>
               <p className="text-[10px] font-black uppercase tracking-wider opacity-60">Total Users</p>
             </div>

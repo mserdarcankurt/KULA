@@ -2,6 +2,10 @@ import { test, expect } from '@playwright/test';
 
 test.describe('KULA Neighborhood Guardian - Advanced Patrol', () => {
   test.beforeEach(async ({ page }) => {
+    // Log page console and error events
+    page.on('console', msg => console.log(`PAGE LOG [${msg.type()}]:`, msg.text()));
+    page.on('pageerror', err => console.error('PAGE ERROR:', err.message));
+
     // Navigate and enable Guardian Mode
     await page.goto('/');
     
@@ -12,13 +16,8 @@ test.describe('KULA Neighborhood Guardian - Advanced Patrol', () => {
       (window as any).enableGuardianMode();
     });
     
-    // Ensure we are in the Feed view of Explore
-    const feedButton = page.locator('#tour-explore-feed-button');
-    await expect(feedButton).toBeVisible({ timeout: 15000 });
-    await feedButton.click();
-    
-    // Wait for the feed or empty state
-    await page.waitForSelector('text=Neighborhood Feed', { timeout: 15000 });
+    // Ensure "Your Neighborhood" header is visible (landing page is Explore)
+    await page.waitForSelector('text=Your Neighborhood', { timeout: 15000 });
   });
 
   test('Detail: Gratitude Flow State Consistency', async ({ page }) => {
@@ -62,44 +61,70 @@ test.describe('KULA Neighborhood Guardian - Advanced Patrol', () => {
     // Navigate to Profile
     await page.click('button:has-text("Profile")');
     
-    // Verify Trust Mosaic elements are detailed and correctly rendered
-    await expect(page.getByText('Trust Mosaic')).toBeVisible();
+    // Verify Profile and Trust Mosaic elements are detailed and correctly rendered
+    await expect(page.getByText('Copy "Link In Bio"')).toBeVisible();
+    await expect(page.getByText('My Network')).toBeVisible();
+    await expect(page.getByText('My Invite Code')).toBeVisible();
     
     // Capture Visual Baseline (for manual review in Playwright report)
-    await page.locator('.bg-white.rounded-3xl.shadow-xl.overflow-hidden').first().screenshot({ path: 'e2e/screenshots/trust-mosaic.png' });
+    await page.screenshot({ path: 'e2e/screenshots/profile-page.png' });
     
-    // Verify bento grid responsiveness (especially in mobile project)
-    const bentoGrid = page.locator('.grid.grid-cols-2.gap-3');
-    await expect(bentoGrid).toBeVisible();
+    // Verify stats grid responsiveness (3 columns for Ask/Share/Join stats)
+    const statsGrid = page.locator('.grid.grid-cols-3');
+    await expect(statsGrid).toBeVisible();
   });
 
   test('Detail: Mobile Bottom Navigation', async ({ page, isMobile }) => {
     if (isMobile) {
       // Specifically test mobile-only interactions
-      const nav = page.locator('nav.fixed.bottom-0');
+      const nav = page.locator('nav');
       await expect(nav).toBeVisible();
       
       // Ensure all 5 nav items are present and labeled
-      const navItems = ['Home', 'Circles', 'Post', 'Chats', 'Profile'];
+      const navItems = ['Home', 'Community', 'Circles', 'Post', 'Profile'];
       for (const item of navItems) {
         await expect(nav.getByText(item)).toBeVisible();
       }
     }
   });
 
-  test('Detail: Discovery Radar Visual Check', async ({ page }) => {
-    await page.click('button:has-text("Home")');
-    // Ensure Discovery view
-    const discoverToggle = page.getByRole('button', { name: /Discover/i });
-    await discoverToggle.click();
+  test('Detail: Map Feed Visual Check', async ({ page }) => {
+    // Click the Community tab to open the slide-up drawer
+    const communityTab = page.locator('#tour-community-tab');
+    await expect(communityTab).toBeVisible({ timeout: 10000 });
+    await communityTab.click();
     
-    await expect(page.getByText('Discovery')).toBeVisible();
+    // Check if either "Maps Unavailable" fallback or map itself is visible inside the drawer
+    await expect(page.getByText('Maps Unavailable').or(page.locator('.gm-style'))).toBeVisible({ timeout: 15000 });
     
-    // Verify Radar card exists
-    const radarCard = page.locator('.relative.mx-1.sm\\:mx-4.bg-white.rounded-\\[2\\.5rem\\]');
-    await expect(radarCard.first()).toBeVisible();
-    
-    // Take screenshot of the radar for regression
-    await radarCard.first().screenshot({ path: 'e2e/screenshots/discovery-radar.png' });
+    // Take screenshot of the map view for regression
+    await page.screenshot({ path: 'e2e/screenshots/map-feed-view.png' });
+  });
+
+  test('Detail: Flow Tab Feed Sub-Filtering', async ({ page }) => {
+    // 1. Switch to Flow mode
+    const flowTabButton = page.locator('#tour-explore-views button:has-text("Flow")');
+    await expect(flowTabButton).toBeVisible();
+    await flowTabButton.click();
+
+    // 2. Verify sub-filter switcher is visible
+    const everythingFilter = page.locator('button:has-text("Everything")');
+    const updatesFilter = page.locator('button:has-text("Updates")');
+    const buzzFilter = page.locator('button:has-text("Buzz")');
+
+    await expect(everythingFilter).toBeVisible();
+    await expect(updatesFilter).toBeVisible();
+    await expect(buzzFilter).toBeVisible();
+
+    // 3. Click "Updates" and verify active state
+    await updatesFilter.click();
+    await expect(updatesFilter).toHaveClass(/bg-\[#5B6B56\]/);
+
+    // 4. Click "Buzz" and verify active state
+    await buzzFilter.click();
+    await expect(buzzFilter).toHaveClass(/bg-\[#5B6B56\]/);
+
+    // 5. Take screenshot of Flow Buzz filter view
+    await page.screenshot({ path: 'e2e/screenshots/flow-buzz-filter.png' });
   });
 });

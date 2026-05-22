@@ -32,18 +32,17 @@ test.describe('KULA Neighborhood Guardian - Cloud Patrol', () => {
     // Check if we can reach the discovery state 
     // (Even if not logged in, some parts of the UI should respond)
     const discoveryHeader = page.locator('text=Discovery');
-    // If we are gated by login, this might not be visible, 
-    // but we can check for the presence of the auth sheet.
-    const loginButton = page.locator('button:has-text("Sign in")');
-    const welcomeText = page.locator('text=Welcome to your neighborhood');
+    // If we are gated by login, check for "I was invited" button or welcome tagline
+    const loginButton = page.locator('button:has-text("I was invited")');
+    const welcomeText = page.locator('text=remember how to share');
     
-    await expect(loginButton.or(welcomeText)).toBeVisible({ timeout: 15000 });
+    await expect(loginButton.or(welcomeText).first()).toBeVisible({ timeout: 15000 });
   });
 
   test('Cloud: Performance Integrity (Latency Check)', async ({ page }) => {
     const start = Date.now();
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     const duration = Date.now() - start;
     
     console.log(`Cloud Patrol: Initial load took ${duration}ms`);

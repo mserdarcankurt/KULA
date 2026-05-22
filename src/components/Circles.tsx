@@ -45,9 +45,10 @@ import React, { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, query, onSnapshot, orderBy, addDoc, serverTimestamp, doc, setDoc, deleteDoc, getDoc, updateDoc, arrayUnion, arrayRemove, where, getDocs } from 'firebase/firestore';
 import { useAuth } from '../hooks/useAuth';
-import { Circle, UserProfile } from '../types';
-import { Users, Plus, Star, MapPin, CheckCircle2, ShieldCheck, X, ArrowLeft, Layers, Map as MapIcon, LogOut, Send, Hash, MessageCircle, History, Search, Image as ImageIcon } from 'lucide-react';
+import { Circle, UserProfile, Chat } from '../types';
+import { Users, Plus, Star, MapPin, CheckCircle2, ShieldCheck, X, ArrowLeft, Layers, Map as MapIcon, LogOut, Send, Hash, MessageCircle, History, Search, Image as ImageIcon, Share2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { ART_DIRECTION } from '../lib/artDirection';
 import Feed from './Feed';
 import Discovery from './Discovery';
 import PostItem from './PostItem';
@@ -102,7 +103,7 @@ function CircleCard({ circle, profile, onJoin, onLeave, onSelect }: CircleCardPr
 
       <div className="flex justify-between items-start mb-2">
         <div className="flex items-center gap-2">
-          <div className="w-10 h-10 bg-stone-100 rounded-xl overflow-hidden flex items-center justify-center text-[--color-brand]">
+          <div className="w-10 h-10 bg-stone-100 rounded-xl overflow-hidden flex items-center justify-center text-brand">
             {circle.photoURL ? (
               <img referrerPolicy="no-referrer" src={circle.photoURL} alt={circle.name} className="w-full h-full object-cover" />
             ) : (
@@ -135,7 +136,7 @@ function CircleCard({ circle, profile, onJoin, onLeave, onSelect }: CircleCardPr
           ) : (
             <button 
               onClick={(e) => { e.stopPropagation(); onJoin(circle.id); }}
-              className="px-4 py-1.5 bg-stone-100 border border-stone-200 text-[--color-brand] rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-[--color-brand] hover:text-white transition-all shadow-sm"
+              className="px-4 py-1.5 bg-stone-100 border border-stone-200 text-brand rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-brand hover:text-white transition-all shadow-sm"
             >
               Join
             </button>
@@ -174,6 +175,15 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
   const { user, profile } = useAuth();
   const [circles, setCircles] = useState<Circle[]>([]);
   const [loading, setLoading] = useState(true);
+  const [pendingInviteCircle, setPendingInviteCircle] = useState<Circle | null>(null);
+  const [loadingPendingInvite, setLoadingPendingInvite] = useState(false);
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [directChats, setDirectChats] = useState<{ chat: Chat; otherUserProfile: UserProfile | null }[]>([]);
+  const [loadingChats, setLoadingChats] = useState(false);
+  const [sentInvites, setSentInvites] = useState<Record<string, boolean>>({});
+  const [invitingChatId, setInvitingChatId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -197,6 +207,8 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
   const [filterStatus, setFilterStatus] = useState<'ALL' | 'JOINED' | 'DISCOVER'>('ALL');
   const [sortBy, setSortBy] = useState<'RECENT' | 'NAME' | 'MEMBERS'>('RECENT');
   const [showFilters, setShowFilters] = useState(false);
+  const [showInfoCard, setShowInfoCard] = useState(true);
+
 
   const channels = ['#General', '#Announcements', '#DailyGratitude', '#UrgentNeeds'];
 
@@ -253,13 +265,81 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
 
   // Handle external selection (from App.tsx/Discovery)
   useEffect(() => {
-    if (selectedCircleId && circles.length > 0) {
-      const circle = circles.find(c => c.id === selectedCircleId);
-      if (circle && profile?.joinedCircles?.includes(circle.id)) {
-        setSelectedCircle(circle);
+    if (selectedCircleId) {
+      const isMember = profile?.joinedCircles?.includes(selectedCircleId);
+      if (isMember) {
+        const found = circles.find(c => c.id === selectedCircleId);
+        if (found) {
+          setSelectedCircle(found);
+          setPendingInviteCircle(null);
+        } else {
+          getDoc(doc(db, 'circles', selectedCircleId)).then(snap => {
+            if (snap.exists()) {
+              setSelectedCircle({ id: snap.id, ...snap.data() } as Circle);
+            }
+            setPendingInviteCircle(null);
+          });
+        }
+      } else {
+        setLoadingPendingInvite(true);
+        getDoc(doc(db, 'circles', selectedCircleId)).then(snap => {
+          if (snap.exists()) {
+            setPendingInviteCircle({ id: snap.id, ...snap.data() } as Circle);
+          } else {
+            alert("Circle invitation link is invalid or the circle no longer exists.");
+            onClearSelection?.();
+          }
+          setLoadingPendingInvite(false);
+        }).catch(err => {
+          console.error("Error fetching pending invite circle:", err);
+          setLoadingPendingInvite(false);
+        });
       }
+    } else {
+      setPendingInviteCircle(null);
     }
   }, [selectedCircleId, circles, profile?.joinedCircles]);
+
+  // Fetch direct chats when invite modal opens
+  useEffect(() => {
+    if (!showInviteModal || !user) return;
+    
+    setLoadingChats(true);
+    setSentInvites({});
+    
+    const q = query(
+      collection(db, 'chats'),
+      where('participants', 'array-contains', user.uid)
+    );
+    
+    getDocs(q).then(async (snapshot) => {
+      const allChats = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Chat));
+      const dChats = allChats.filter(c => c.type === 'DIRECT');
+      
+      const resolvedChats: { chat: Chat; otherUserProfile: UserProfile | null }[] = [];
+      for (const chat of dChats) {
+        const otherUserId = chat.participants.find(id => id !== user.uid);
+        if (otherUserId) {
+          try {
+            const userSnap = await getDoc(doc(db, 'users', otherUserId));
+            resolvedChats.push({
+              chat,
+              otherUserProfile: userSnap.exists() ? ({ uid: userSnap.id, ...userSnap.data() } as UserProfile) : null
+            });
+          } catch (e) {
+            console.error("Error fetching other user profile:", e);
+            resolvedChats.push({ chat, otherUserProfile: null });
+          }
+        }
+      }
+      
+      setDirectChats(resolvedChats);
+      setLoadingChats(false);
+    }).catch(err => {
+      console.error("Error fetching direct chats for invite:", err);
+      setLoadingChats(false);
+    });
+  }, [showInviteModal, user]);
 
   useEffect(() => {
     if (!selectedCircle || circleView !== 'MEMBERS') return;
@@ -443,6 +523,41 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
     }
   };
 
+  const handleSendDirectInvite = async (chatId: string) => {
+    if (!user || !selectedCircle) return;
+    setInvitingChatId(chatId);
+    
+    try {
+      const inviteMsg = `Check out our neighborhood circle "${selectedCircle.name}"!`;
+      
+      await addDoc(collection(db, 'chats', chatId, 'messages'), {
+        chatId,
+        senderId: user.uid,
+        senderName: profile?.displayName || 'Neighbor',
+        text: inviteMsg,
+        type: 'INVITE',
+        invite: {
+          circleId: selectedCircle.id,
+          circleName: selectedCircle.name,
+          circlePhotoURL: selectedCircle.photoURL || null
+        },
+        createdAt: serverTimestamp()
+      });
+      
+      await updateDoc(doc(db, 'chats', chatId), {
+        lastMessage: `Circle Invitation: ${selectedCircle.name}`,
+        updatedAt: serverTimestamp(),
+        unreadBy: directChats.find(dc => dc.chat.id === chatId)?.chat.participants.filter(p => p !== user.uid) || []
+      });
+      
+      setSentInvites(prev => ({ ...prev, [chatId]: true }));
+    } catch (err) {
+      console.error("Error sending circle invite message:", err);
+    } finally {
+      setInvitingChatId(null);
+    }
+  };
+
   const filteredAndSortedCircles = circles
     .filter(circle => {
       const matchesSearch = circle.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -517,6 +632,122 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
     }
   };
 
+  const handleChatTabClick = async () => {
+    if (!selectedCircle) return;
+    setCircleView('CHAT');
+    
+    const chatId = `circle_${selectedCircle.id}_general`;
+    setSelectedChannel(chatId);
+    
+    try {
+      const chatRef = doc(db, 'chats', chatId);
+      const chatSnap = await getDoc(chatRef);
+      if (!chatSnap.exists()) {
+        await setDoc(chatRef, {
+          type: 'CHANNEL',
+          circleId: selectedCircle.id,
+          channelName: '#General',
+          participants: [],
+          lastMessage: `Welcome to #General!`,
+          updatedAt: serverTimestamp()
+        });
+      }
+    } catch (err) {
+      console.error('Error creating general circle chat:', err);
+    }
+  };
+
+  if (loadingPendingInvite) {
+    return (
+      <div className="h-full flex items-center justify-center bg-[#FDFBF4]">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-stone-800" />
+      </div>
+    );
+  }
+
+  if (pendingInviteCircle) {
+    const isJoining = joiningCode;
+    
+    return (
+      <div className="h-full flex flex-col bg-[#FDFBF4] overflow-hidden items-center justify-center p-6 text-center">
+        <motion.div 
+          initial={{ scale: 0.95, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          className="w-full max-w-sm bg-white border border-[#D9D0C0] p-8 rounded-[2.5rem] shadow-xl relative"
+        >
+          <button 
+            onClick={() => {
+              setPendingInviteCircle(null);
+              onClearSelection?.();
+            }}
+            className="absolute top-4 right-4 w-8 h-8 rounded-full bg-stone-100 flex items-center justify-center text-stone-400 hover:text-stone-700 transition-colors"
+          >
+            <X size={16} />
+          </button>
+
+          <div className="w-24 h-24 rounded-[2rem] overflow-hidden border border-[#D9D0C0] mx-auto mb-6 shadow-inner bg-stone-50">
+            {pendingInviteCircle.photoURL ? (
+              <img src={pendingInviteCircle.photoURL} alt="" className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-[#a29b8c]">
+                <Users size={40} />
+              </div>
+            )}
+          </div>
+
+          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#a29b8c] block mb-2">
+            Circle Invitation
+          </span>
+          <h2 className="serif text-2xl font-bold text-stone-900 mb-2 leading-tight">
+            {pendingInviteCircle.name}
+          </h2>
+          <p className="text-stone-500 text-sm italic mb-8">
+            {pendingInviteCircle.description || 'Welcome! You have been invited to join this neighborhood circle.'}
+          </p>
+
+          <div className="space-y-4">
+            <button 
+              onClick={async () => {
+                setJoiningCode(true);
+                try {
+                  await handleJoin(pendingInviteCircle.id);
+                } catch (e) {
+                  console.error("Error joining from invite screen:", e);
+                } finally {
+                  setJoiningCode(false);
+                }
+              }}
+              disabled={isJoining}
+              className="w-full py-4 bg-stone-900 hover:bg-black text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-md transition-all active:scale-95 flex items-center justify-center gap-2"
+            >
+              {isJoining ? (
+                <>
+                  <span className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+                  <span>Joining...</span>
+                </>
+              ) : (
+                <>
+                  <Users size={16} />
+                  <span>Join Circle</span>
+                </>
+              )}
+            </button>
+
+            <button 
+              onClick={() => {
+                setPendingInviteCircle(null);
+                onClearSelection?.();
+              }}
+              className="w-full py-4 bg-stone-100 hover:bg-stone-200 text-stone-600 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all"
+            >
+              Cancel
+            </button>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
   if (selectedCircle) {
     return (
       <div className="h-full flex flex-col bg-white overflow-hidden">
@@ -525,6 +756,7 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
             onClick={() => {
               if (selectedChannel) {
                 setSelectedChannel(null);
+                setCircleView('FEED');
               } else {
                 setSelectedCircle(null);
                 onClearSelection?.();
@@ -533,7 +765,7 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
             className="flex items-center gap-2 text-stone-400 hover:text-stone-900 transition-colors mb-4 text-[10px] uppercase font-black tracking-widest"
           >
             <ArrowLeft size={16} />
-            <span>{selectedChannel ? 'Circle Channels' : 'All Circles'}</span>
+            <span>{selectedChannel ? 'Circle Feed' : 'All Circles'}</span>
           </button>
           
           <div className="flex justify-between items-start">
@@ -548,13 +780,22 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
               </div>
             </div>
             {!selectedChannel && (
-              <button 
-                onClick={(e) => handleLeave(e, selectedCircle.id)}
-                className="p-2 text-stone-300 hover:text-red-500 transition-colors"
-                title="Leave Circle"
-              >
-                <LogOut size={20} />
-              </button>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => setShowInviteModal(true)}
+                  className="p-2 text-stone-500 hover:text-[#5B8266] transition-colors"
+                  title="Invite Neighbors"
+                >
+                  <Share2 size={20} />
+                </button>
+                <button 
+                  onClick={(e) => handleLeave(e, selectedCircle.id)}
+                  className="p-2 text-stone-300 hover:text-red-500 transition-colors"
+                  title="Leave Circle"
+                >
+                  <LogOut size={20} />
+                </button>
+              </div>
             )}
           </div>
 
@@ -569,22 +810,13 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
               <span>Feed</span>
             </button>
             <button 
-              onClick={() => { setCircleView('CHAT'); setSelectedChannel(null); }}
+              onClick={handleChatTabClick}
               className={`flex items-center gap-2 px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
                 circleView === 'CHAT' ? 'bg-white shadow-sm text-stone-900' : 'text-stone-400'
               }`}
             >
               <MessageCircle size={14} />
               <span>Chat</span>
-            </button>
-            <button 
-              onClick={() => { setCircleView('DISCOVERY'); setSelectedChannel(null); }}
-              className={`flex items-center gap-2 px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
-                circleView === 'DISCOVERY' && !selectedChannel ? 'bg-white shadow-sm text-stone-900' : 'text-stone-400'
-              }`}
-            >
-              <MapIcon size={14} />
-              <span>Map</span>
             </button>
             <button 
               onClick={() => { setCircleView('POST'); setSelectedChannel(null); }}
@@ -607,97 +839,81 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto no-scrollbar">
-          {selectedChannel ? (
-            <ChatRoom 
-              chatId={selectedChannel} 
-              onAction={(type) => {
-                setPreSelectedPostType(type);
-                setCircleView('POST');
-                setSelectedChannel(null);
-              }}
-            />
-          ) : circleView === 'FEED' ? (
-            <Feed location={profile?.location || null} circleId={selectedCircle.id} onNavigateToChat={onNavigateToChat} />
-          ) : circleView === 'CHAT' ? (
-            <div className="p-6 space-y-3">
-              <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-stone-400 mb-6 px-1">Community Channels</h4>
-              {channels.map((channel) => (
-                <button
-                  key={channel}
-                  onClick={() => openChannel(channel)}
-                  className="w-full flex items-center justify-between p-6 bg-white border-2 border-stone-100 rounded-[2.5rem] hover:border-stone-900 transition-all group shadow-sm active:scale-[0.98] cursor-pointer"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-stone-50 rounded-2xl flex items-center justify-center text-stone-400 group-hover:bg-stone-900 group-hover:text-white transition-all shadow-inner">
-                      <Hash size={24} />
-                    </div>
-                    <div className="text-left">
-                      <span className="text-base font-black text-stone-900 block tracking-tight">{channel}</span>
-                      <span className="text-[10px] text-stone-400 font-bold uppercase tracking-widest">Join the thread</span>
-                    </div>
-                  </div>
-                  <div className="w-4 h-4 rounded-full border-2 border-stone-100 group-hover:bg-[--color-brand] group-hover:border-[--color-brand] transition-all" />
-                </button>
-              ))}
-            </div>
-          ) : circleView === 'DISCOVERY' ? (
-            <Discovery location={profile?.location || null} circleId={selectedCircle.id} onNavigateToChat={onNavigateToChat} />
-          ) : circleView === 'MEMBERS' ? (
-            <div className="p-6">
-              <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-stone-400 mb-6 px-1">Circle Members ({circleMembers.length})</h4>
-              {loadingMembers ? (
-                <div className="text-center py-20 text-stone-300 italic">Loading neighbors...</div>
-              ) : (
-                <div className="grid gap-4">
-                  {circleMembers.map((member) => (
-                    <div 
-                      key={member.uid}
-                      className="flex items-center justify-between p-4 bg-white border border-stone-100 rounded-3xl group hover:border-stone-200 transition-all shadow-sm"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 bg-stone-100 rounded-2xl overflow-hidden border border-stone-50">
-                          {member.photoURL ? (
-                            <img referrerPolicy="no-referrer" src={member.photoURL} alt={member.displayName} className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-stone-300 font-bold">
-                              {member.displayName?.charAt(0)}
-                            </div>
-                          )}
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                             <span className="font-bold text-stone-900">{member.displayName}</span>
-                             {member.uid === user?.uid && <span className="text-[8px] bg-stone-100 text-stone-500 px-1.5 py-0.5 rounded font-black uppercase tracking-widest">You</span>}
+        {selectedChannel ? (
+          <ChatRoom 
+            chatId={selectedChannel} 
+            onAction={(type) => {
+              setPreSelectedPostType(type);
+              setCircleView('POST');
+              setSelectedChannel(null);
+            }}
+          />
+        ) : (
+          <div className="flex-1 overflow-y-auto no-scrollbar">
+            {circleView === 'FEED' ? (
+              <Feed location={profile?.location || null} circleId={selectedCircle.id} onNavigateToChat={onNavigateToChat} />
+            ) : circleView === 'CHAT' ? (
+              <div className="flex items-center justify-center py-20 text-stone-400 font-serif italic animate-pulse">
+                Opening chat space...
+              </div>
+            ) : circleView === 'DISCOVERY' ? (
+              <Discovery location={profile?.location || null} circleId={selectedCircle.id} onNavigateToChat={onNavigateToChat} />
+            ) : circleView === 'MEMBERS' ? (
+              <div className="p-6">
+                <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-stone-400 mb-6 px-1">Circle Members ({circleMembers.length})</h4>
+                {loadingMembers ? (
+                  <div className="text-center py-20 text-stone-300 italic">Loading neighbors...</div>
+                ) : (
+                  <div className="grid gap-4">
+                    {circleMembers.map((member) => (
+                      <div 
+                        key={member.uid}
+                        className="flex items-center justify-between p-4 bg-white border border-stone-100 rounded-3xl group hover:border-stone-200 transition-all shadow-sm"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 bg-stone-100 rounded-2xl overflow-hidden border border-stone-50">
+                            {member.photoURL ? (
+                              <img referrerPolicy="no-referrer" src={member.photoURL} alt={member.displayName} className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-stone-300 font-bold">
+                                {member.displayName?.charAt(0)}
+                              </div>
+                            )}
                           </div>
-                          <p className="text-[10px] text-stone-400 font-medium line-clamp-1 italic">{member.bio || "Active neighbor"}</p>
+                          <div>
+                            <div className="flex items-center gap-2">
+                               <span className="font-bold text-stone-900">{member.displayName}</span>
+                               {member.uid === user?.uid && <span className="text-[8px] bg-stone-100 text-stone-500 px-1.5 py-0.5 rounded font-black uppercase tracking-widest">You</span>}
+                            </div>
+                            <p className="text-[10px] text-stone-400 font-medium line-clamp-1 italic">{member.bio || "Active neighbor"}</p>
+                          </div>
                         </div>
+                        
+                        {member.uid !== user?.uid && (
+                          <button 
+                            onClick={() => startPrivateChat(member.uid)}
+                            className="p-3 bg-stone-50 text-stone-400 hover:bg-stone-900 hover:text-white rounded-2xl transition-all shadow-inner group-hover:shadow-md"
+                            title={`Message ${member.displayName}`}
+                          >
+                            <MessageCircle size={18} />
+                          </button>
+                        )}
                       </div>
-                      
-                      {member.uid !== user?.uid && (
-                        <button 
-                          onClick={() => startPrivateChat(member.uid)}
-                          className="p-3 bg-stone-50 text-stone-400 hover:bg-stone-900 hover:text-white rounded-2xl transition-all shadow-inner group-hover:shadow-md"
-                          title={`Message ${member.displayName}`}
-                        >
-                          <MessageCircle size={18} />
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            <PostItem 
-              location={profile?.location || null} 
-              onSuccess={() => setCircleView('FEED')} 
-              onCancel={() => setCircleView('FEED')}
-              initialCircleId={selectedCircle.id} 
-              initialType={preSelectedPostType}
-            />
-          )}
-        </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <PostItem 
+                location={profile?.location || null} 
+                onSuccess={() => setCircleView('FEED')} 
+                onCancel={() => setCircleView('FEED')}
+                initialCircleId={selectedCircle.id} 
+                initialType={preSelectedPostType}
+              />
+            )}
+          </div>
+        )}
         <AnimatePresence>
           {leavingId && (
             <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
@@ -714,7 +930,7 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
                 exit={{ scale: 0.9, opacity: 0 }}
                 className="relative bg-white p-8 rounded-[2.5rem] shadow-2xl max-w-xs w-full text-center border-2 border-stone-900"
               >
-                <div className="w-16 h-16 bg-red-50 text-red-500 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-inner">
+                <div className="w-16 h-16 bg-[#C86A51]/10 text-[#C86A51] rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-inner">
                   <LogOut size={32} />
                 </div>
                 <h3 className="serif text-2xl font-bold text-stone-900 mb-2">Leaving Circle?</h3>
@@ -724,13 +940,13 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
                 <div className="grid grid-cols-2 gap-3">
                   <button 
                     onClick={() => setLeavingId(null)}
-                    className="py-4 bg-stone-100 text-stone-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-stone-200 transition-all"
+                    className={`py-4 ${ART_DIRECTION.buttons.secondary} rounded-2xl font-black text-[10px] uppercase tracking-widest`}
                   >
                     Stay
                   </button>
                   <button 
                     onClick={confirmLeave}
-                    className="py-4 bg-red-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-red-700 shadow-lg transition-all"
+                    className={`py-4 ${ART_DIRECTION.buttons.destructive} rounded-2xl font-black text-[10px] uppercase tracking-widest`}
                   >
                     Leave
                   </button>
@@ -750,7 +966,7 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6">
           <div>
             <h2 className="serif text-4xl font-bold text-stone-900 leading-tight">Circles</h2>
-            <p className="text-[10px] uppercase font-black tracking-widest text-[--color-brand] mt-1.5 px-0.5">Intentional communities</p>
+            <p className="text-[10px] uppercase font-black tracking-widest text-brand mt-1.5 px-0.5">Intentional communities</p>
           </div>
           <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
             <button 
@@ -817,7 +1033,7 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
               <div className="space-y-4">
                 <div className="flex justify-between items-center px-1">
                   <label className="text-[10px] font-black uppercase tracking-[0.3em] text-stone-500 ml-2 flex items-center gap-2">
-                    <Layers size={14} className="text-[--color-brand]" />
+                    <Layers size={14} className="text-brand" />
                     Filter circles by
                   </label>
                   {(searchQuery || filterStatus !== 'ALL' || sortBy !== 'RECENT') && (
@@ -827,7 +1043,7 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
                         setFilterStatus('ALL');
                         setSortBy('RECENT');
                       }}
-                      className="text-[9px] font-black uppercase tracking-widest text-stone-400 hover:text-[--color-brand] transition-colors flex items-center gap-1.5"
+                      className="text-[9px] font-black uppercase tracking-widest text-stone-400 hover:text-brand transition-colors flex items-center gap-1.5"
                     >
                       <History size={12} />
                       Reset Filters
@@ -1016,6 +1232,38 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
       </AnimatePresence>
 
       <div className="space-y-4">
+        <AnimatePresence>
+          {showInfoCard && (
+            <motion.div
+              key="info-card"
+              initial={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+              transition={{ duration: 0.25, ease: 'easeInOut' }}
+              className="mb-6 overflow-hidden"
+            >
+              <div className="p-6 bg-stone-50/65 border border-stone-100 rounded-[2rem] space-y-3 relative">
+                <button
+                  onClick={() => setShowInfoCard(false)}
+                  className="absolute top-4 right-4 w-7 h-7 flex items-center justify-center rounded-full bg-stone-100 hover:bg-stone-200 text-stone-400 hover:text-stone-600 transition-all"
+                  aria-label="Dismiss info card"
+                >
+                  <X size={14} />
+                </button>
+                <h3 className="serif text-base font-bold text-stone-900 flex items-center gap-2 pr-8">
+                  🏡 About Community Circles
+                </h3>
+                <p className="text-xs text-stone-600 leading-relaxed">
+                  Circles are self-organized micro-communities within KULA. Posting here limits visibility exclusively to circle members, creating a safe, focused space for collaborative sharing, tools coordination, and topic-specific conversations.
+                </p>
+                <p className="text-[10px] text-stone-400 font-bold uppercase tracking-wider leading-normal">
+                  Why you see this: These are active interest groups and local collectives in Berlin. Join public circles to participate in their feed and group chats.
+                </p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+
         {loading ? (
           <div className="text-center py-20 text-stone-300 italic">Finding your people...</div>
         ) : filteredAndSortedCircles.length > 0 ? (
@@ -1094,7 +1342,7 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
               exit={{ scale: 0.9, opacity: 0 }}
               className="relative bg-white p-8 rounded-[2.5rem] shadow-2xl max-w-xs w-full text-center border-2 border-stone-900"
             >
-              <div className="w-16 h-16 bg-red-50 text-red-500 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-inner">
+              <div className="w-16 h-16 bg-[#C86A51]/10 text-[#C86A51] rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-inner">
                 <LogOut size={32} />
               </div>
               <h3 className="serif text-2xl font-bold text-stone-900 mb-2">Leaving Circle?</h3>
@@ -1104,16 +1352,151 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
               <div className="grid grid-cols-2 gap-3">
                 <button 
                   onClick={() => setLeavingId(null)}
-                  className="py-4 bg-stone-100 text-stone-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-stone-200 transition-all"
+                  className={`py-4 ${ART_DIRECTION.buttons.secondary} rounded-2xl font-black text-[10px] uppercase tracking-widest`}
                 >
                   Stay
                 </button>
                 <button 
                   onClick={confirmLeave}
-                  className="py-4 bg-red-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-red-700 shadow-lg transition-all"
+                  className={`py-4 ${ART_DIRECTION.buttons.destructive} rounded-2xl font-black text-[10px] uppercase tracking-widest`}
                 >
                   Leave
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {showInviteModal && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-stone-900/60 backdrop-blur-md"
+              onClick={() => setShowInviteModal(false)}
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative bg-[#FDFBF4] p-6 rounded-[2.5rem] shadow-2xl max-w-sm w-full border border-[#D9D0C0] flex flex-col max-h-[85vh]"
+            >
+              <button 
+                onClick={() => setShowInviteModal(false)}
+                className="absolute top-4 right-4 w-8 h-8 rounded-full bg-stone-100 flex items-center justify-center text-stone-400 hover:text-stone-700 transition-colors"
+              >
+                <X size={16} />
+              </button>
+
+              <div className="mb-6">
+                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#a29b8c] block mb-1">Circle Sharing</span>
+                <h3 className="serif text-2xl font-bold text-stone-900">Invite Neighbors</h3>
+                <p className="text-xs text-stone-500 italic mt-1">Share {selectedCircle?.name} with your connections.</p>
+              </div>
+
+              {/* Share Options: Link & Code */}
+              <div className="space-y-4 mb-6 flex-none">
+                <div>
+                  <span className="text-[9px] font-black uppercase tracking-widest text-[#a29b8c] block mb-1.5">Direct Invitation Link</span>
+                  <div className="flex gap-2 bg-white p-2 rounded-2xl border border-[#D9D0C0]">
+                    <input 
+                      type="text" 
+                      readOnly 
+                      value={`${window.location.origin}/?circle=${selectedCircle?.id}`}
+                      className="flex-1 bg-transparent border-none text-xs text-stone-600 outline-none px-2 select-all truncate"
+                    />
+                    <button 
+                      onClick={() => {
+                        navigator.clipboard.writeText(`${window.location.origin}/?circle=${selectedCircle?.id}`);
+                        setCopiedLink(true);
+                        setTimeout(() => setCopiedLink(false), 2000);
+                      }}
+                      className="px-4 py-2 bg-stone-950 hover:bg-black text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all"
+                    >
+                      {copiedLink ? 'Copied' : 'Copy'}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <span className="text-[9px] font-black uppercase tracking-widest text-[#a29b8c] block mb-1.5">Circle Code / ID</span>
+                  <div className="flex gap-2 bg-white p-2 rounded-2xl border border-[#D9D0C0]">
+                    <input 
+                      type="text" 
+                      readOnly 
+                      value={selectedCircle?.id || ''}
+                      className="flex-1 bg-transparent border-none text-xs text-stone-600 outline-none px-2 select-all truncate font-mono"
+                    />
+                    <button 
+                      onClick={() => {
+                        navigator.clipboard.writeText(selectedCircle?.id || '');
+                        setCopiedCode(true);
+                        setTimeout(() => setCopiedCode(false), 2000);
+                      }}
+                      className="px-4 py-2 bg-stone-950 hover:bg-black text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all"
+                    >
+                      {copiedCode ? 'Copied' : 'Copy'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Direct Connections List */}
+              <div className="flex-1 flex flex-col min-h-0">
+                <span className="text-[9px] font-black uppercase tracking-widest text-[#a29b8c] block mb-2 flex-none">Send to Direct Chats</span>
+                
+                {loadingChats ? (
+                  <div className="flex-1 flex items-center justify-center py-8">
+                    <span className="animate-spin rounded-full h-6 w-6 border-2 border-stone-800 border-t-transparent" />
+                  </div>
+                ) : directChats.length === 0 ? (
+                  <div className="flex-1 flex flex-col items-center justify-center py-8 text-center bg-white/40 rounded-2xl border border-[#D9D0C0]/50 px-4">
+                    <p className="text-xs text-stone-400 italic">No direct connections yet.</p>
+                    <p className="text-[9px] text-stone-400 mt-1">Start a conversation from public profiles or items to connect!</p>
+                  </div>
+                ) : (
+                  <div className="flex-1 overflow-y-auto pr-1 space-y-2 no-scrollbar">
+                    {directChats.map((dc) => {
+                      const otherProfile = dc.otherUserProfile;
+                      const hasSent = sentInvites[dc.chat.id];
+                      
+                      return (
+                        <div 
+                          key={dc.chat.id} 
+                          className="flex items-center justify-between p-3 bg-white rounded-2xl border border-[#D9D0C0]/60 hover:border-[#D9D0C0] transition-all"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-9 h-9 bg-stone-100 rounded-xl overflow-hidden border border-[#D9D0C0] flex-shrink-0">
+                              {otherProfile?.photoURL ? (
+                                <img src={otherProfile.photoURL} alt="" className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-stone-400 text-xs font-bold">
+                                  {otherProfile?.displayName?.charAt(0) || 'N'}
+                                </div>
+                              )}
+                            </div>
+                            <span className="text-xs font-bold text-stone-900 truncate">
+                              {otherProfile?.displayName || 'Neighbor'}
+                            </span>
+                          </div>
+                          
+                          <button 
+                            disabled={hasSent || invitingChatId === dc.chat.id}
+                            onClick={() => handleSendDirectInvite(dc.chat.id)}
+                            className={`px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${
+                              hasSent 
+                                ? 'bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold' 
+                                : 'bg-[#5B8266] hover:bg-[#4A6B53] text-white shadow-sm active:scale-95'
+                            }`}
+                          >
+                            {invitingChatId === dc.chat.id ? 'Sending...' : hasSent ? 'Sent ✓' : 'Send'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </motion.div>
           </div>

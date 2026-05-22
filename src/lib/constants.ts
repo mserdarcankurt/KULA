@@ -13,5 +13,5 @@ export const DISCOVERY_DEFAULTS = {
   localOnly: false,          // false = show items from circles too, not just GPS vicinity
   radius: 50,               // in km — default search radius
   scope: 'ALL' as const,    // 'ALL' means show both VICINITY and CIRCLE items
-  typeFilter: 'ALL' as const, // Show all item types (ASK, SHARE, IMECE, etc.)
+  typeFilter: 'ALL' as const, // Show all item types (ASK, SHARE, JOIN, CIRCLE_INVITE)
 };

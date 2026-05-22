@@ -40,7 +40,8 @@ export const isDev = import.meta.env.DEV;
 
 // In development, we use the "(default)" database (the emulator).
 // In production, we use a named database from the config file.
-const databaseId = isDev ? '(default)' : firebaseConfig.firestoreDatabaseId;
+// [ALPHA] Dev mode connects directly to the live database so real invite codes work on localhost.
+const databaseId = firebaseConfig.firestoreDatabaseId;
 
 console.log(`[KULA SYSTEM] Running in ${isDev ? 'DEVELOPMENT' : 'PRODUCTION'} mode.`);
 console.log(`[KULA SYSTEM] Targeting Database: ${databaseId}`);
@@ -48,45 +49,25 @@ console.log(`[KULA SYSTEM] Targeting Database: ${databaseId}`);
 // ═══════════════════════════════════════════════════════════════
 // FIRESTORE INITIALIZATION
 // ═══════════════════════════════════════════════════════════════
-// `ignoreUndefinedProperties`: If a UserProfile has `instagramHandle: undefined`,
-//   Firestore would normally throw an error. This flag lets it silently skip those fields.
-//   This is important because TypeScript optional fields (`?`) default to undefined.
-//
-// `memoryLocalCache()`: Uses in-memory caching instead of IndexedDB.
-//   Faster startup, but data disappears on refresh. For a real-time app like KULA
-//   where we use `onSnapshot` everywhere, this is acceptable because data is always fresh.
 export const db = initializeFirestore(app, {
   ignoreUndefinedProperties: true,
-  localCache: memoryLocalCache()
+  localCache: memoryLocalCache(),
+  experimentalForceLongPolling: true
 }, databaseId);
 
 // ═══════════════════════════════════════════════════════════════
 // AUTH INITIALIZATION
 // ═══════════════════════════════════════════════════════════════
-// `auth` is the Firebase Auth instance. useAuth.tsx uses this to:
-//   1. Listen for login state changes (onAuthStateChanged)
-//   2. Trigger Google login (signInWithPopup)
-//   3. Log out (signOut)
-//
-// `googleProvider` configures the Google OAuth popup.
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
-// ═══════════════════════════════════════════════════════════════
-// EMULATOR CONNECTION (DEV ONLY)
-// ═══════════════════════════════════════════════════════════════
-// When running locally, we redirect all Firebase calls to the emulators
-// instead of hitting the real cloud. This means:
-//   - Auth calls go to localhost:9099 (no real Google accounts needed)
-//   - Firestore calls go to localhost:8080 (data lives in memory, resets on restart)
-//
-// IMPORTANT: If you see "Firestore unreachable" errors in dev, make sure
-// you've started the emulators with: `firebase emulators:start`
-if (isDev) {
-  console.log("[KULA SYSTEM] Connecting to local Firebase Emulators...");
-  connectFirestoreEmulator(db, '127.0.0.1', 8080);
-  connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
-}
+// [ALPHA] Emulator connections commented out so dev mode hits the live database.
+// To use local emulators, uncomment this block and run `npm run emulators`.
+// if (isDev) {
+//   console.log("[KULA SYSTEM] Connecting to local Firebase Emulators...");
+//   connectFirestoreEmulator(db, '127.0.0.1', 8080);
+//   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+// }
 
 // ═══════════════════════════════════════════════════════════════
 // CONNECTION TEST

@@ -13,23 +13,28 @@ import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './hooks/useAuth';
 import { useGeolocation } from './hooks/useGeolocation';
 import Explore from './components/Explore';
-import Organizations from './components/Organizations';
-import Circles from './components/Circles';
-import PostItem from './components/PostItem';
-import ChatsList from './components/ChatsList';
-import Profile from './components/Profile';
+// [ALPHA] Organizations shelved — import kept for future re-enabling
+// import Organizations from './components/Organizations';
+const Circles = React.lazy(() => import('./components/Circles'));
+const PostItem = React.lazy(() => import('./components/PostItem'));
+const ChatsList = React.lazy(() => import('./components/ChatsList'));
+const Profile = React.lazy(() => import('./components/Profile'));
 import PublicProfile from './components/PublicProfile';
-import AdminPanel from './components/AdminPanel';
-import GuardianDashboard from './components/GuardianDashboard';
+const AdminPanel = React.lazy(() => import('./components/AdminPanel'));
+const GuardianDashboard = React.lazy(() => import('./components/GuardianDashboard'));
 import Header from './components/Header';
 import Navigation from './components/Navigation';
 import Welcome from './components/Welcome';
-import Onboarding from './components/Onboarding';
-import TourGuide from './components/TourGuide';
-import InviteGate from './components/InviteGate';
-import WaitingRoom from './components/WaitingRoom';
+import CommunityDrawer from './components/CommunityDrawer';
+const Onboarding = React.lazy(() => import('./components/Onboarding'));
+const TourGuide = React.lazy(() => import('./components/TourGuide'));
+const InviteGate = React.lazy(() => import('./components/InviteGate'));
+const WaitingRoom = React.lazy(() => import('./components/WaitingRoom'));
 import { db } from './lib/firebase';
 import { collection, query, where, getDocs } from 'firebase/firestore';
+import { APIProvider } from '@vis.gl/react-google-maps';
+
+const API_KEY = (import.meta.env.VITE_GOOGLE_MAPS_PLATFORM_KEY as string) || '';
 
 /**
  * AppContent:
@@ -45,6 +50,7 @@ function AppContent() {
   const [activeTab, setActiveTab] = useState('home');
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [selectedCircleId, setSelectedCircleId] = useState<string | null>(null);
+  const [showCommunityDrawer, setShowCommunityDrawer] = useState(false);
 
   const handleNavigateToCircle = (circleId: string) => {
     setSelectedCircleId(circleId);
@@ -84,6 +90,29 @@ function AppContent() {
     resolveLink();
   }, [linkInBioParam]);
 
+  // Handle circle invite links (?circle=xxx or ?join=xxx)
+  useEffect(() => {
+    const circleId = searchParams.get('circle') || searchParams.get('join');
+    if (circleId) {
+      setSelectedCircleId(circleId);
+      setActiveTab('circles');
+      
+      // Clean query params from address bar
+      const newUrl = window.location.pathname;
+      window.history.replaceState({}, document.title, newUrl);
+    }
+  }, []);
+
+
+  // Request browser notification permissions once authenticated
+  useEffect(() => {
+    if (user) {
+      import('./lib/pushService').then(({ requestNotificationPermission }) => {
+        requestNotificationPermission();
+      });
+    }
+  }, [user]);
+
   /**
    * LOADING STATE:
    * If we are still checking the user's login or resolving a link, 
@@ -91,8 +120,8 @@ function AppContent() {
    */
   if (authLoading || resolvingLink) {
     return (
-      <div className="h-screen w-screen flex items-center justify-center bg-[--color-brand-light]">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[--color-brand]"></div>
+      <div className="h-screen w-screen flex items-center justify-center bg-brand-light">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand"></div>
       </div>
     );
   }
@@ -105,9 +134,11 @@ function AppContent() {
   if (linkInBioUid) {
     return (
       <div className="flex flex-col h-[100dvh] max-w-md mx-auto bg-white shadow-xl relative overflow-hidden">
-        <PublicProfile userId={linkInBioUid} onClose={() => {
-           window.location.href = '/'; // Go back to the main app
-        }} />
+        <React.Suspense fallback={<div className="h-full w-full flex items-center justify-center bg-stone-50"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div></div>}>
+          <PublicProfile userId={linkInBioUid} onClose={() => {
+             window.location.href = '/'; // Go back to the main app
+          }} />
+        </React.Suspense>
       </div>
     );
   }
@@ -118,26 +149,32 @@ function AppContent() {
   }
 
   /**
-   * GATE 2: INVITE CHAIN GATING
-   * KULA is a trust-based community. You need an invite to enter.
-   * Admins bypass this.
+   * ONBOARDING STATE MACHINE:
+   * Instead of checking multiple boolean flags, we use a single `onboardingStep` field.
+   * The Onboarding component handles the full Storied Journey internally —
+   * from invite code entry through philosophy slides to profile setup.
+   * 
+   * Legacy users with hasCompletedOnboarding === true are treated as COMPLETE.
+   * Admins bypass the entire flow.
    */
-  if (!profile?.isAdmin) {
-    // If you don't have a 'host' (inviter), go to the Invite Gate.
-    if (!profile?.hostId || profile.hostStatus === 'NONE') {
-      return <InviteGate />;
-    }
+  const onboardingStep = profile?.onboardingStep;
+  const isOnboardingComplete = 
+    onboardingStep === 'COMPLETE' || 
+    profile?.hasCompletedOnboarding === true ||
+    profile?.isAdmin;
 
-    // If your invite is still being reviewed by your host, stay in the Waiting Room.
-    if (profile.hostStatus === 'PENDING') {
-      return <WaitingRoom />;
-    }
-  }
-
-  // GATE 3: ONBOARDING
-  // If you are brand new, we force you to complete the onboarding flow (bio, photo, etc).
-  if (profile && profile.hasCompletedOnboarding === false) {
-    return <Onboarding onComplete={() => {}} />;
+  if (!isOnboardingComplete && profile) {
+    return (
+      <React.Suspense fallback={<div className="h-screen w-screen flex items-center justify-center bg-brand-light"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand"></div></div>}>
+        <Onboarding onComplete={(action?: 'give' | 'ask' | 'explore') => {
+          if (action === 'give' || action === 'ask') {
+            setActiveTab('post');
+          } else {
+            setActiveTab('home');
+          }
+        }} />
+      </React.Suspense>
+    );
   }
 
   /**
@@ -156,18 +193,11 @@ function AppContent() {
               setActiveTab('chats');
             }} 
             onNavigateToCircle={handleNavigateToCircle}
+            onNavigateToTab={setActiveTab}
           />
         );
-      case 'organizations':
-        return (
-          <Organizations 
-            location={location} 
-            onNavigateToChat={(chatId) => {
-              setSelectedChatId(chatId);
-              setActiveTab('chats');
-            }} 
-          />
-        );
+      // [ALPHA] organizations tab shelved — case removed
+      // case 'organizations': ...
       case 'circles':
         return (
           <Circles 
@@ -190,6 +220,10 @@ function AppContent() {
             onRestartOnboarding={() => setActiveTab('home')} 
             onSeedComplete={() => setActiveTab('home')}
             onNavigateToGuardian={() => setActiveTab('guardian')}
+            onNavigateToChat={(chatId) => {
+              setSelectedChatId(chatId);
+              setActiveTab('chats');
+            }}
           />
         );
       case 'admin':
@@ -209,17 +243,39 @@ function AppContent() {
   return (
     <div className="flex flex-col h-[100dvh] max-w-md mx-auto bg-white shadow-xl relative overflow-hidden">
       {/* The TourGuide is a hidden layer that can pop up to show 'How-to' tips */}
-      <TourGuide />
+      <React.Suspense fallback={null}>
+        <TourGuide />
+      </React.Suspense>
       
-      <Header setActiveTab={setActiveTab} />
+      <Header setActiveTab={setActiveTab} setSelectedChatId={setSelectedChatId} />
       
       <main className="flex-1 flex flex-col min-h-0 overflow-hidden relative h-full w-full">
         {/* This is where the magic happens - the dynamic content swaps here */}
-        {renderContent()}
+        <React.Suspense fallback={<div className="h-full w-full flex items-center justify-center bg-stone-50"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-stone-800"></div></div>}>
+          {renderContent()}
+        </React.Suspense>
       </main>
       
+      {/* The Community Drawer */}
+      <CommunityDrawer
+        isOpen={showCommunityDrawer}
+        onClose={() => setShowCommunityDrawer(false)}
+        location={location}
+        onNavigateToChat={(chatId) => {
+          setSelectedChatId(chatId);
+          setActiveTab('chats');
+          setShowCommunityDrawer(false);
+        }}
+      />
+
       {/* The bottom navigation bar that lets users switch between tabs */}
-      <Navigation activeTab={activeTab} setActiveTab={setActiveTab} isAdmin={profile?.isAdmin} />
+      <Navigation 
+        activeTab={activeTab} 
+        setActiveTab={setActiveTab} 
+        isAdmin={profile?.isAdmin} 
+        showCommunityDrawer={showCommunityDrawer}
+        setShowCommunityDrawer={setShowCommunityDrawer}
+      />
     </div>
   );
 }
@@ -232,7 +288,13 @@ function AppContent() {
 export default function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      {API_KEY ? (
+        <APIProvider apiKey={API_KEY} version="weekly">
+          <AppContent />
+        </APIProvider>
+      ) : (
+        <AppContent />
+      )}
     </AuthProvider>
   );
 }
