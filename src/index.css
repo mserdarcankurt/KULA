@@ -50,7 +50,8 @@
 
 /* Apply the warm, earthy defaults to the entire page and prevent document bouncing */
 html,
-body {
+body,
+#root {
   height: 100%;
   overflow: hidden;
   overscroll-behavior: none;

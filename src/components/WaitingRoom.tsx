@@ -74,13 +74,14 @@ export default function WaitingRoom() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-stone-50 flex items-center justify-center p-6">
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6 }}
-        className="max-w-md w-full space-y-8 text-center"
-      >
+    <div className="w-full h-full bg-stone-50 overflow-y-auto">
+      <div className="min-h-full w-full flex flex-col items-center justify-center p-6">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
+          className="max-w-md w-full space-y-8 text-center py-8"
+        >
         {/* Logo */}
         <div className="space-y-2">
           <div className="w-16 h-16 bg-[#5A5A40] rounded-2xl mx-auto flex items-center justify-center shadow-lg">
@@ -156,5 +157,6 @@ export default function WaitingRoom() {
         </button>
       </motion.div>
     </div>
+  </div>
   );
 }
