@@ -370,6 +370,10 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
 
   const targetLanguage = profile?.preferredLanguage || 'English';
 
+  const isMeBlockingOther = otherUser && profile?.blockedUsers?.includes(otherUser.uid);
+  const isOtherBlockingMe = otherUser && otherUser.blockedUsers?.includes(user?.uid || '');
+  const isBlockedActive = isMeBlockingOther || isOtherBlockingMe;
+
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
@@ -588,7 +592,7 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
   }, [messages]);
 
   const sendMessage = async (messageText: string, type: 'TEXT' | 'POLL' | 'SYSTEM' | 'URGENT' = 'TEXT', pollOrMetadata?: any) => {
-    if (!user) return;
+    if (!user || isBlockedActive) return;
     if (type === 'TEXT' && !messageText.trim()) return;
 
     try {
@@ -637,7 +641,7 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!text.trim()) return;
+    if (isBlockedActive || !text.trim()) return;
     
     const messageText = text;
     setText('');
@@ -772,7 +776,7 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
   };
 
   const confirmHandover = async () => {
-    if (!item || item.ownerId !== user?.uid) return;
+    if (isBlockedActive || !item || item.ownerId !== user?.uid) return;
     
     try {
       await updateDoc(doc(db, 'items', item.id), {
@@ -1159,39 +1163,49 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
         )}
       </AnimatePresence>
 
-      <form 
-        onSubmit={handleSend}
-        className="p-4 bg-white border-t border-stone-100 flex items-center gap-2 relative z-10"
-      >
-        <button 
-          ref={smileButtonRef}
-          type="button" 
-          onClick={() => setShowEmojiPicker(prev => !prev)}
-          className={`p-2 transition-colors rounded-full ${showEmojiPicker ? 'text-[#a29b8c] bg-stone-100' : 'text-stone-500 hover:text-stone-700'}`}
-          aria-label="Choose emoji"
+      {isBlockedActive ? (
+        <div className="p-6 bg-stone-50 border-t border-stone-100 flex items-center justify-center text-center relative z-10 w-full select-none">
+          <span className="text-xs text-stone-400 font-bold uppercase tracking-wider italic">
+            {isMeBlockingOther 
+              ? 'You have blocked this neighbor. Unblock them in their profile to chat.' 
+              : 'This conversation is no longer active.'}
+          </span>
+        </div>
+      ) : (
+        <form 
+          onSubmit={handleSend}
+          className="p-4 bg-white border-t border-stone-100 flex items-center gap-2 relative z-10"
         >
-          <Smile size={20} />
-        </button>
-        <input 
-          ref={inputRef}
-          type="text" 
-          placeholder="Type a message..."
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          className="flex-1 bg-stone-100 border-none rounded-2xl px-4 py-3 text-sm text-stone-900 placeholder:text-stone-400 focus:ring-1 focus:ring-stone-900 outline-none"
-        />
-        <button 
-          type="submit"
-          className={`w-10 h-10 flex items-center justify-center rounded-full transition-all shadow-md ${
-            text.trim() 
-              ? 'bg-stone-900 text-white hover:bg-stone-800' 
-              : 'bg-stone-200 text-stone-400 cursor-not-allowed'
-          }`}
-          disabled={!text.trim()}
-        >
-          <Send size={18} />
-        </button>
-      </form>
+          <button 
+            ref={smileButtonRef}
+            type="button" 
+            onClick={() => setShowEmojiPicker(prev => !prev)}
+            className={`p-2 transition-colors rounded-full ${showEmojiPicker ? 'text-[#a29b8c] bg-stone-100' : 'text-stone-500 hover:text-stone-700'}`}
+            aria-label="Choose emoji"
+          >
+            <Smile size={20} />
+          </button>
+          <input 
+            ref={inputRef}
+            type="text" 
+            placeholder="Type a message..."
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            className="flex-1 bg-stone-100 border-none rounded-2xl px-4 py-3 text-sm text-stone-900 placeholder:text-stone-400 focus:ring-1 focus:ring-stone-900 outline-none"
+          />
+          <button 
+            type="submit"
+            className={`w-10 h-10 flex items-center justify-center rounded-full transition-all shadow-md ${
+              text.trim() 
+                ? 'bg-stone-900 text-white hover:bg-stone-800' 
+                : 'bg-stone-200 text-stone-400 cursor-not-allowed'
+            }`}
+            disabled={!text.trim()}
+          >
+            <Send size={18} />
+          </button>
+        </form>
+      )}
 
       {showGratitudeFlow && otherUser && item && (
         <GratitudeFlow

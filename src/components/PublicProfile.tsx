@@ -38,15 +38,17 @@ import { createPortal } from 'react-dom';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { doc, getDoc, collection, query, where, getDocs, orderBy, onSnapshot, updateDoc, arrayUnion, arrayRemove, addDoc, serverTimestamp } from 'firebase/firestore';
 import { UserProfile, Item, Circle } from '../types';
-import { X, Star, Award, MapPin, Shield, Tag, Heart, CheckCircle2, Clock, Ban, UserMinus, UserCheck, Instagram, Target, Sparkles, Lock, MessageSquare, Users } from 'lucide-react';
+import { X, Star, Award, MapPin, Shield, Tag, Heart, CheckCircle2, Clock, Ban, UserMinus, UserCheck, Instagram, Target, Sparkles, Lock, MessageSquare, Users, Flag } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { useAuth } from '../hooks/useAuth';
 import { getFallbackImage, ART_DIRECTION } from '../lib/artDirection';
 import { checkSymmetricVisibility, clearTrustGraphCache } from '../lib/trustGraph';
+import { logEvent } from '../lib/analytics';
 import TrustMosaicComponent from './TrustMosaic';
 import ConnectionBadge from './ConnectionBadge';
 import { ItemDetailsSheet } from './ItemDetailsSheet';
 import { getOrCreateChat } from '../services/chatService';
+import ReportSheet from './ReportSheet';
 
 interface PublicProfileProps {
   userId: string;
@@ -69,6 +71,7 @@ export default function PublicProfile({ userId, onClose, onNavigateToChat }: Pub
   const [isPrivate, setIsPrivate] = useState(false);
   const [isStartingChat, setIsStartingChat] = useState(false);
   const [commonCircles, setCommonCircles] = useState<Circle[]>([]);
+  const [showReportSheet, setShowReportSheet] = useState(false);
 
   const isBlocked = myProfile?.blockedUsers?.includes(userId);
 
@@ -208,6 +211,11 @@ export default function PublicProfile({ userId, onClose, onNavigateToChat }: Pub
         status: 'PENDING',
         createdAt: serverTimestamp()
       });
+      
+      logEvent('trust_vouch_created', {
+        to_user_id: userId
+      });
+
       setVouchStatus('PENDING');
       setVouchDirection('SENT');
       setVouchId(vouchRef.id);
@@ -236,6 +244,11 @@ export default function PublicProfile({ userId, onClose, onNavigateToChat }: Pub
       await updateDoc(doc(db, 'vouches', vouchId), {
         status: 'ACCEPTED'
       });
+
+      logEvent('trust_vouch_accepted', {
+        from_user_id: vouchDirection === 'RECEIVED' ? userId : user?.uid
+      });
+
       setVouchStatus('ACCEPTED');
       clearTrustGraphCache();
 
@@ -300,21 +313,30 @@ export default function PublicProfile({ userId, onClose, onNavigateToChat }: Pub
       />
 
       {/* Top Header Controls (Block & Close) */}
-      <div className="absolute top-6 left-6 right-6 z-20 flex items-center justify-between pointer-events-none">
+      <div className="absolute top-[calc(1.5rem+env(safe-area-inset-top))] left-6 right-6 z-20 flex items-center justify-between pointer-events-none">
         <div className="pointer-events-auto">
           {user && user.uid !== userId && (
-            <button
-              onClick={handleToggleBlock}
-              disabled={isBlocking}
-              title={isBlocked ? "Unblock Neighbor" : "Block Neighbor"}
-              className={`p-3 rounded-full transition-all border shadow-sm backdrop-blur-md ${
-                isBlocked 
-                  ? 'bg-red-50 text-red-650 border-red-200 hover:bg-red-100' 
-                  : 'bg-white/90 text-stone-450 hover:text-stone-800 border-stone-200/60 hover:bg-white'
-              }`}
-            >
-              {isBlocked ? <UserCheck size={18} /> : <Ban size={18} />}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowReportSheet(true)}
+                title="Report Neighbor"
+                className="p-3 rounded-full transition-all border shadow-sm backdrop-blur-md bg-white/90 text-stone-450 hover:text-amber-600 border-stone-200/60 hover:bg-amber-50"
+              >
+                <Flag size={18} />
+              </button>
+              <button
+                onClick={handleToggleBlock}
+                disabled={isBlocking}
+                title={isBlocked ? "Unblock Neighbor" : "Block Neighbor"}
+                className={`p-3 rounded-full transition-all border shadow-sm backdrop-blur-md ${
+                  isBlocked 
+                    ? 'bg-red-50 text-red-650 border-red-200 hover:bg-red-100' 
+                    : 'bg-white/90 text-stone-450 hover:text-stone-800 border-stone-200/60 hover:bg-white'
+                }`}
+              >
+                {isBlocked ? <UserCheck size={18} /> : <Ban size={18} />}
+              </button>
+            </div>
           )}
         </div>
 
@@ -590,6 +612,16 @@ export default function PublicProfile({ userId, onClose, onNavigateToChat }: Pub
             }
             onClose();
           }}
+        />
+      )}
+
+      {/* Report Sheet — App Store compliance: users must be able to report other users */}
+      {showReportSheet && (
+        <ReportSheet
+          type="USER"
+          targetId={userId}
+          targetName={profile?.displayName || 'This neighbor'}
+          onClose={() => setShowReportSheet(false)}
         />
       )}
     </div>,

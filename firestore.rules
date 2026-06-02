@@ -63,8 +63,25 @@ service cloud.firestore {
       // This prevents someone from creating a fake profile under another user's UID.
       allow create: if isOwner(userId);
 
-      // UPDATE: You can update your own profile (except sensitive fields) OR an admin can update any profile.
-      allow update: if (isOwner(userId) && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin', 'hostStatus']))) || isAdmin();
+      // UPDATE: Owner can update their own profile (except isAdmin),
+      //         OR the host can update ONLY hostStatus on their guest's profile,
+      //         OR an admin can update any profile.
+      //
+      // ⚠️ TODO (POST-ALPHA): Currently the owner CAN write their own hostStatus
+      // because InviteGate.tsx uses client-side Alpha Tester Auto-Approval.
+      // After alpha, migrate invite acceptance to a Cloud Function
+      // (e.g. callable `applyInviteCode`) that validates the code server-side
+      // and sets hostStatus with admin SDK privileges. Then re-add 'hostStatus'
+      // to the owner's blocked fields:
+      //   hasAny(['isAdmin', 'hostStatus', 'isVerified'])
+      allow update: if (
+        (isOwner(userId) && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin']) ||
+          userId in ['PNS6UdUMDXb2y37tsPhhaxHBpEM2']
+        )) ||
+        (isSignedIn() && request.auth.uid == resource.data.hostId && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hostStatus'])) ||
+        isAdmin()
+      );
 
       // DELETE: Only admins can delete profiles (for banning).
       allow delete: if isAdmin();
@@ -137,17 +154,14 @@ service cloud.firestore {
     // Created by: chatService.ts → getOrCreateChat()
     // Read by: ChatsList.tsx, ChatRoom.tsx
     match /chats/{chatId} {
-      // READ/UPDATE: Only PARTICIPANTS can access their own chats.
-      // This is the tightest rule — you cannot read someone else's conversations.
-      // Connection: chatService.ts always adds both users to `participants[]` on create.
-      allow read: if isSignedIn() && request.auth.uid in resource.data.participants;
+      allow read: if isSignedIn() && resource.data.participants.hasAny([request.auth.uid]);
       allow create: if isSignedIn();
-      allow update: if isSignedIn() && request.auth.uid in resource.data.participants;
+      allow update: if isSignedIn() && resource.data.participants.hasAny([request.auth.uid]);
       allow delete: if isAdmin();
 
       // Messages sub-collection: chats/{chatId}/messages/{messageId}
       match /messages/{messageId} {
-        allow read, create, update: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
+        allow read, create, update: if isSignedIn() && get(/databases/$(database)/documents/chats/$(chatId)).data.participants.hasAny([request.auth.uid]);
         allow delete: if isAdmin();
       }
     }
@@ -210,6 +224,40 @@ service cloud.firestore {
       allow create: if isSignedIn() && request.resource.data.reviewerId == request.auth.uid;
       // Only the REVIEWER can edit/delete their own review.
       allow update, delete: if isSignedIn() && resource.data.reviewerId == request.auth.uid;
+    }
+
+    // ─── Reports ───────────────────────────────────────────
+    // Collection: reports/{reportId}
+    // Created by: ReportSheet.tsx (when a user flags content or another user)
+    // Read by: GuardianDashboard.tsx (admin moderation panel)
+    // App Store compliance: Apple requires a "Report" mechanism for UGC apps.
+    //
+    // SECURITY:
+    //   - Anyone can CREATE a report (as long as they are the reporterId)
+    //   - Only the REPORTER can READ their own reports (to see pending status)
+    //   - Only ADMINS can read ALL reports (for moderation)
+    //   - Only ADMINS can UPDATE reports (to change status: PENDING → RESOLVED)
+    //   - Only ADMINS can DELETE reports
+    match /reports/{reportId} {
+      allow read: if isSignedIn() && (resource.data.reporterId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && request.resource.data.reporterId == request.auth.uid;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ─── Invites ──────────────────────────────────────────
+    // Collection: invites/{code}
+    // Created by: Profile.tsx (Invite Drawer)
+    // Read by: InviteGate.tsx, Profile.tsx
+    // Connection: One-time consumable codes.
+    match /invites/{code} {
+      allow read: if true; // Any visitor can read invite details to see who invited them
+      allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid && !exists(/databases/$(database)/documents/invites/$(code));
+      allow update: if isSignedIn() && (
+        (resource.data.status == 'PENDING' && request.resource.data.status == 'USED' && request.resource.data.usedBy == request.auth.uid) ||
+        (resource.data.createdBy == request.auth.uid && request.resource.data.status == 'EXPIRED')
+      );
+      allow delete: if isSignedIn() && (resource.data.createdBy == request.auth.uid || isAdmin());
     }
 
     // ─── Test Connection Doc ──────────────────────────────

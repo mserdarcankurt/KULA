@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CLIENT_ID</key>
+	<string>310900608830-o6d33pamiv5lp7hu0jus8orbi9tshu7g.apps.googleusercontent.com</string>
+	<key>REVERSED_CLIENT_ID</key>
+	<string>com.googleusercontent.apps.310900608830-o6d33pamiv5lp7hu0jus8orbi9tshu7g</string>
+	<key>API_KEY</key>
+	<string>AIzaSyDgPY6Tqy3BVrWXJGrLI1zh2_N85u09dCo</string>
+	<key>GCM_SENDER_ID</key>
+	<string>310900608830</string>
+	<key>PLIST_VERSION</key>
+	<string>1</string>
+	<key>BUNDLE_ID</key>
+	<string>com.kula.app</string>
+	<key>PROJECT_ID</key>
+	<string>gen-lang-client-0207804941</string>
+	<key>STORAGE_BUCKET</key>
+	<string>gen-lang-client-0207804941.firebasestorage.app</string>
+	<key>IS_ADS_ENABLED</key>
+	<false></false>
+	<key>IS_ANALYTICS_ENABLED</key>
+	<false></false>
+	<key>IS_APPINVITE_ENABLED</key>
+	<true></true>
+	<key>IS_GCM_ENABLED</key>
+	<true></true>
+	<key>IS_SIGNIN_ENABLED</key>
+	<true></true>
+	<key>GOOGLE_APP_ID</key>
+	<string>1:310900608830:ios:34e81b3d2d9a52495ca66f</string>
+</dict>
+</plist>

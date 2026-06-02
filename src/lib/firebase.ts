@@ -23,8 +23,12 @@
  *     This is faster but means data isn't persisted across browser refreshes.
  */
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User, connectAuthEmulator } from 'firebase/auth';
+import { getAuth, initializeAuth, browserLocalPersistence, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User, connectAuthEmulator } from 'firebase/auth';
+import { Capacitor } from '@capacitor/core';
 import { getFirestore, doc, getDocFromServer, initializeFirestore, memoryLocalCache, connectFirestoreEmulator } from 'firebase/firestore';
+import { getFunctions, connectFunctionsEmulator } from 'firebase/functions';
+import { getStorage, connectStorageEmulator } from 'firebase/storage';
+import { getMessaging } from 'firebase/messaging';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 // Initialize the Firebase app instance. This is the root object from which
@@ -38,10 +42,15 @@ const app = initializeApp(firebaseConfig);
 // and `false` in production builds.
 export const isDev = import.meta.env.DEV;
 
-// In development, we use the "(default)" database (the emulator).
-// In production, we use a named database from the config file.
-// [ALPHA] Dev mode connects directly to the live database so real invite codes work on localhost.
-const databaseId = firebaseConfig.firestoreDatabaseId;
+export const useEmulator = isDev && (
+  (typeof window !== 'undefined' && window.navigator.webdriver) ||
+  (typeof window !== 'undefined' && window.location.search.includes('emulator=true')) ||
+  import.meta.env.VITE_USE_EMULATOR === 'true'
+);
+
+// In development/emulator, we use the "(default)" database.
+// In production, we use the named database from the config file.
+const databaseId = useEmulator ? '(default)' : firebaseConfig.firestoreDatabaseId;
 
 console.log(`[KULA SYSTEM] Running in ${isDev ? 'DEVELOPMENT' : 'PRODUCTION'} mode.`);
 console.log(`[KULA SYSTEM] Targeting Database: ${databaseId}`);
@@ -52,22 +61,39 @@ console.log(`[KULA SYSTEM] Targeting Database: ${databaseId}`);
 export const db = initializeFirestore(app, {
   ignoreUndefinedProperties: true,
   localCache: memoryLocalCache(),
-  experimentalForceLongPolling: true
 }, databaseId);
 
 // ═══════════════════════════════════════════════════════════════
 // AUTH INITIALIZATION
 // ═══════════════════════════════════════════════════════════════
-export const auth = getAuth(app);
+// On native (Capacitor iOS/Android), getAuth() hangs because it tries to probe
+// IndexedDB for session persistence, and IndexedDB behaves erratically under
+// the `capacitor://localhost` origin. Using initializeAuth with explicit
+// browserLocalPersistence (which uses localStorage) bypasses this entirely.
+// On web (real browsers), getAuth() works perfectly.
+export const auth = Capacitor.isNativePlatform()
+  ? initializeAuth(app, { persistence: browserLocalPersistence })
+  : getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
-// [ALPHA] Emulator connections commented out so dev mode hits the live database.
-// To use local emulators, uncomment this block and run `npm run emulators`.
-// if (isDev) {
-//   console.log("[KULA SYSTEM] Connecting to local Firebase Emulators...");
-//   connectFirestoreEmulator(db, '127.0.0.1', 8080);
-//   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
-// }
+// ═══════════════════════════════════════════════════════════════
+// FUNCTIONS INITIALIZATION
+// ═══════════════════════════════════════════════════════════════
+export const functions = getFunctions(app);
+export const storage = getStorage(app);
+
+// ═══════════════════════════════════════════════════════════════
+// MESSAGING INITIALIZATION
+// ═══════════════════════════════════════════════════════════════
+export const messaging = typeof window !== 'undefined' && 'Notification' in window ? getMessaging(app) : null;
+
+if (useEmulator) {
+  console.log("[KULA SYSTEM] Connecting to local Firebase Emulators...");
+  connectFirestoreEmulator(db, '127.0.0.1', 8080);
+  connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+  connectFunctionsEmulator(functions, '127.0.0.1', 5001);
+  connectStorageEmulator(storage, '127.0.0.1', 9199);
+}
 
 // ═══════════════════════════════════════════════════════════════
 // CONNECTION TEST
@@ -78,14 +104,24 @@ export const googleProvider = new GoogleAuthProvider();
 // BEFORE the user ever tries to interact with the app.
 export async function testConnection() {
   try {
-    console.log("Testing Firestore connection...");
-    await getDocFromServer(doc(db, 'test', 'connection'));
-    console.log("Firestore connection successful!");
+    console.log("[KULA SYSTEM] Testing Firestore connection...");
+    // Race the Firestore read against a 15-second timeout.
+    // In Capacitor WebView, Firestore can sometimes hang on first connection.
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Connection test timed out after 15s')), 15000)
+    );
+    await Promise.race([
+      getDocFromServer(doc(db, 'test', 'connection')),
+      timeoutPromise
+    ]);
+    console.log("[KULA SYSTEM] Firestore connection successful!");
   } catch (error) {
-    console.warn("Firestore connection test failed (expected if 'test/connection' doc doesn't exist, but checking for connectivity errors):", error);
+    console.warn("[KULA SYSTEM] Firestore connection test result:", error);
     if (error instanceof Error) {
       if (error.message.includes('the client is offline') || error.message.includes('unavailable')) {
-        console.error("CRITICAL: Firestore unreachable. Please check your network or Firebase configuration.");
+        console.error("[KULA SYSTEM] CRITICAL: Firestore unreachable. Please check your network or Firebase configuration.");
+      } else if (error.message.includes('timed out')) {
+        console.warn("[KULA SYSTEM] Firestore connection test timed out — app may still work, auth will proceed independently.");
       }
     }
   }

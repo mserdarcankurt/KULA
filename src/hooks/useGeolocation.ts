@@ -9,10 +9,17 @@
  *     - PostItem.tsx → which attaches them to new posts as the item's location
  *     - MapView.tsx → which uses them to center the map on the user's position
  * 
+ * NATIVE vs. WEB:
+ *   - On WEB (browser): Uses navigator.geolocation (the standard browser API).
+ *   - On NATIVE (iOS/Android): Uses @capacitor/geolocation, which calls CoreLocation
+ *     on iOS and LocationManager on Android. This is faster, more accurate, and
+ *     triggers the proper native permission dialogs.
+ * 
  * FLOW:
- *   1. On first render, asks the browser for GPS permission.
- *   2. If granted, stores { lat, lng } in state.
- *   3. If denied, stores an error message (app still works, just without distance sorting).
+ *   1. On first render, checks if running natively or in a browser.
+ *   2. Calls the appropriate geolocation API.
+ *   3. If granted, stores { lat, lng } in state.
+ *   4. If denied, stores an error message (app still works, just without distance sorting).
  * 
  * WHY ONLY ONCE?
  *   The empty dependency array [] means this runs once on mount.
@@ -24,36 +31,74 @@
  *   Used by: useItems.ts to sort feed items by proximity.
  */
 import { useState, useEffect } from 'react';
+import { isNative } from '../lib/platform';
+import { Geolocation } from '@capacitor/geolocation';
 
-export function useGeolocation() {
+export function useGeolocation(enabled = true) {
   // State: the user's current GPS coordinates, or null if not yet available
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
   // State: error message if GPS is denied or unavailable
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Check if the browser supports geolocation (it won't on very old browsers)
-    if (!navigator.geolocation) {
-      setError('Geolocation is not supported by your browser');
-      return;
-    }
-
-    // Request the user's current position.
-    // This triggers the browser's "Allow location?" popup on first visit.
-    // SUCCESS: We store the coordinates.
-    // FAILURE: We store the error (user denied, or GPS unavailable).
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setLocation({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        });
-      },
-      (err) => {
-        setError(err.message);
+    if (!enabled) return;
+    const getPosition = async () => {
+      try {
+        if (isNative()) {
+          /**
+           * NATIVE PATH (iOS / Android):
+           * Uses @capacitor/geolocation which calls CoreLocation on iOS.
+           * This triggers the native iOS permission dialog:
+           *   "KULA would like to use your location"
+           * with the proper "While Using the App" / "Always" options.
+           *
+           * Benefits over navigator.geolocation:
+           *   - Faster: CoreLocation has direct hardware access.
+           *   - More accurate: Can use the iPhone's GPS + WiFi + Bluetooth triangulation.
+           *   - Proper permissions: Integrates with iOS Settings > Privacy > Location Services.
+           */
+          const permResult = await Geolocation.requestPermissions();
+          if (permResult.location === 'denied') {
+            setError('Location permission denied. You can enable it in Settings.');
+            return;
+          }
+          const position = await Geolocation.getCurrentPosition({
+            enableHighAccuracy: true,
+            timeout: 10000,
+          });
+          setLocation({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          });
+        } else {
+          /**
+           * WEB PATH (Browser):
+           * Falls back to the standard navigator.geolocation API.
+           * This triggers the browser's "Allow location?" popup.
+           */
+          if (!navigator.geolocation) {
+            setError('Geolocation is not supported by your browser');
+            return;
+          }
+          navigator.geolocation.getCurrentPosition(
+            (position) => {
+              setLocation({
+                lat: position.coords.latitude,
+                lng: position.coords.longitude,
+              });
+            },
+            (err) => {
+              setError(err.message);
+            }
+          );
+        }
+      } catch (err) {
+        setError((err as Error).message || 'Failed to get location');
       }
-    );
-  }, []); // Empty array = run once when the component mounts
+    };
+
+    getPosition();
+  }, [enabled]); // Run when enabled shifts from false to true
 
   return { location, error };
 }

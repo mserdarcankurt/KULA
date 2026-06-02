@@ -44,10 +44,11 @@
  */
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
-import { LogOut, Star, Award, MapPin, Heart, Settings, Tag, Clock, CheckCircle2, Globe, Shield, Target, Sparkles, Languages, X, Users, Instagram, Home, Plus, Trash2, User, Network, EyeOff } from 'lucide-react';
+import { LogOut, Star, Award, MapPin, Heart, Settings, Tag, Clock, CheckCircle2, Globe, Shield, Target, Sparkles, Languages, X, Users, Instagram, Home, Plus, Trash2, User, Network, EyeOff, AlertTriangle, FileText } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, query, where, onSnapshot, orderBy, writeBatch, serverTimestamp, doc, updateDoc, setDoc, getDocs, getDoc, addDoc, deleteDoc } from 'firebase/firestore';
 import PublicProfile from './PublicProfile';
+import { generateThematicCode, createUniqueInvite } from '../utils/inviteGenerator';
 import { Item, SavedLocation, UserPrivacySettings, TrustPrivacyLevel } from '../types';
 import SeedData from './SeedData';
 import TrustMosaicComponent from './TrustMosaic';
@@ -56,6 +57,7 @@ import { clearTrustGraphCache } from '../lib/trustGraph';
 import { generateRandomizedCenter, NEIGHBORHOOD_RADIUS_OPTIONS, DEFAULT_NEIGHBORHOOD_RADIUS } from '../lib/neighborhoodPrivacy';
 import AddressAutocomplete from './AddressAutocomplete';
 import { Map, AdvancedMarker, useMap } from '@vis.gl/react-google-maps';
+import DeleteAccountSheet from './DeleteAccountSheet';
 
 const API_KEY = (import.meta.env.VITE_GOOGLE_MAPS_PLATFORM_KEY as string) || '';
 
@@ -205,7 +207,7 @@ export default function Profile({
   onNavigateToGuardian?: () => void,
   onNavigateToChat?: (chatId: string) => void
 }) {
-  const { user, profile, logout, isGuardian, updateProfile } = useAuth();
+  const { user, profile, logout, updateProfile } = useAuth();
   const [items, setItems] = useState<Item[]>([]);
   const [loadingItems, setLoadingItems] = useState(true);
   const [filter, setFilter] = useState<'SHARE' | 'ASK' | 'JOIN'>('SHARE');
@@ -224,7 +226,9 @@ export default function Profile({
   const [newThePersonFor, setNewThePersonFor] = useState(profile.thePersonFor?.join(', ') || '');
   
   const [updatingTags, setUpdatingTags] = useState(false);
+  const [updatingIntroPref, setUpdatingIntroPref] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [seedMessage, setSeedMessage] = useState('');
   
   const [myGuests, setMyGuests] = useState<any[]>([]);
@@ -235,6 +239,14 @@ export default function Profile({
   const [pendingVouches, setPendingVouches] = useState<any[]>([]);
   const [acceptingVouchId, setAcceptingVouchId] = useState<string | null>(null);
   const [selectedVouchProfile, setSelectedVouchProfile] = useState<string | null>(null);
+
+  // ── Invitation Manager State ──
+  const [showInviteDrawer, setShowInviteDrawer] = useState(false);
+  const [draftCode, setDraftCode] = useState('');
+  const [inviteMemo, setInviteMemo] = useState('');
+  const [activeInvites, setActiveInvites] = useState<any[]>([]);
+  const [generatingInvite, setGeneratingInvite] = useState(false);
+  const [generatingError, setGeneratingError] = useState('');
 
   // ── Address Book State ──
   const [savedLocations, setSavedLocations] = useState<SavedLocation[]>(profile.savedLocations || []);
@@ -629,6 +641,20 @@ export default function Profile({
     }
   };
 
+  const updateSkipIntroAnimation = async (value: boolean) => {
+    if (!user) return;
+    setUpdatingIntroPref(true);
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        skipIntroAnimation: value
+      });
+    } catch (err) {
+      console.error('Failed to update skipIntroAnimation preference:', err);
+    } finally {
+      setUpdatingIntroPref(false);
+    }
+  };
+
   const updateVisibilityPreference = async (pref: any) => {
     if (!user) return;
     setUpdatingVisibility(true);
@@ -692,29 +718,99 @@ export default function Profile({
     setUpdatingHost(true);
     setHostError('');
     setHostSuccess('');
-    try {
-      const q = query(collection(db, 'users'), where('inviteCode', '==', hostCodeInput.trim().toUpperCase()));
-      const snap = await getDocs(q);
-      
-      if (snap.empty) {
-        setHostError('Invite code not found.');
+
+    const inviteCodeKey = hostCodeInput.trim().toLowerCase();
+
+    // Support the app store reviewer tester login bypass code
+    if (inviteCodeKey === 'tester') {
+      try {
+        await updateDoc(doc(db, 'users', user.uid), {
+          hostId: 'mock-host-uid',
+          hostStatus: 'APPROVED'
+        });
+        setHostSuccess('Connected with host Alice Neighbor! Onboarding complete.');
+        setHostCodeInput('');
+      } catch (err) {
+        console.error('Failed to apply tester host:', err);
+        setHostError('Failed to apply code.');
+      } finally {
         setUpdatingHost(false);
-        return;
       }
-      
-      const hostDoc = snap.docs[0];
-      if (hostDoc.id === user.uid) {
-        setHostError('You cannot be your own host.');
+      return;
+    }
+
+    try {
+      // 1. Look up the passcode in the new /invites collection
+      const inviteRef = doc(db, 'invites', inviteCodeKey);
+      const inviteSnap = await getDoc(inviteRef);
+
+      if (inviteSnap.exists()) {
+        const inviteData = inviteSnap.data();
+        if (inviteData.status !== 'PENDING') {
+          setHostError('This invite code has already been used.');
+          setUpdatingHost(false);
+          return;
+        }
+
+        const hostUid = inviteData.createdBy;
+        if (hostUid === user.uid) {
+          setHostError('You cannot use your own invite code.');
+          setUpdatingHost(false);
+          return;
+        }
+
+        const hostSnap = await getDoc(doc(db, 'users', hostUid));
+        if (!hostSnap.exists()) {
+          setHostError('Host user profile not found.');
+          setUpdatingHost(false);
+          return;
+        }
+
+        const hostData = hostSnap.data();
+
+        // Transaction/Batch to mark code as USED and update bob's profile to hostId / APPROVED
+        const batch = writeBatch(db);
+        batch.update(inviteRef, {
+          status: 'USED',
+          usedBy: user.uid,
+          usedByName: profile?.displayName || user.displayName || 'Anonymous User',
+          usedAt: serverTimestamp()
+        });
+
+        batch.update(doc(db, 'users', user.uid), {
+          hostId: hostUid,
+          hostStatus: 'APPROVED'
+        });
+
+        await batch.commit();
+
+        setHostSuccess(`Connected with host ${inviteData.createdByName || hostData.displayName || 'A neighbor'}!`);
+        setHostCodeInput('');
         setUpdatingHost(false);
         return;
       }
 
-      await updateDoc(doc(db, 'users', user.uid), {
-        hostId: hostDoc.id,
-        hostStatus: 'PENDING'
-      });
-      setHostSuccess(`Host request sent to ${hostDoc.data().displayName}! Waiting for approval.`);
-      setHostCodeInput('');
+      // 2. Fallback: Search the legacy inviteCode field in the /users collection
+      const legacyQ = query(collection(db, 'users'), where('inviteCode', '==', hostCodeInput.trim().toUpperCase()));
+      const legacySnap = await getDocs(legacyQ);
+
+      if (!legacySnap.empty) {
+        const hostDoc = legacySnap.docs[0];
+        if (hostDoc.id === user.uid) {
+          setHostError('You cannot be your own host.');
+          setUpdatingHost(false);
+          return;
+        }
+
+        await updateDoc(doc(db, 'users', user.uid), {
+          hostId: hostDoc.id,
+          hostStatus: 'APPROVED'
+        });
+        setHostSuccess(`Connected with host ${hostDoc.data().displayName}!`);
+        setHostCodeInput('');
+      } else {
+        setHostError('Invite code not found.');
+      }
     } catch (err) {
       console.error('Failed to set host code:', err);
       setHostError('Failed to apply code.');
@@ -745,6 +841,53 @@ export default function Profile({
     }
   };
 
+  // Generate a draft code when the drawer is opened or shuffled
+  const handleShuffleInviteCode = () => {
+    setDraftCode(generateThematicCode());
+    setGeneratingError('');
+  };
+
+  useEffect(() => {
+    if (showInviteDrawer && !draftCode) {
+      handleShuffleInviteCode();
+    }
+  }, [showInviteDrawer]);
+
+  const handleCreateInvite = async () => {
+    if (!user || !profile || !draftCode.trim()) return;
+    setGeneratingInvite(true);
+    setGeneratingError('');
+    try {
+      await createUniqueInvite(
+        draftCode,
+        user.uid,
+        profile.displayName || user.displayName || 'A neighbor',
+        profile.photoURL || '',
+        inviteMemo
+      );
+      setInviteMemo('');
+      // Generate a new candidate code for the next invite
+      setDraftCode(generateThematicCode());
+      alert('Invitation code generated successfully!');
+    } catch (err: any) {
+      console.error('Invite creation failed:', err);
+      setGeneratingError(err.message || 'Failed to create invite.');
+    } finally {
+      setGeneratingInvite(false);
+    }
+  };
+
+  const handleDeleteInvite = async (codeId: string) => {
+    const confirmDelete = window.confirm(`Revoke the invite code "${codeId}"? Anyone who has this code won't be able to use it anymore.`);
+    if (!confirmDelete) return;
+    try {
+      await deleteDoc(doc(db, 'invites', codeId));
+    } catch (err) {
+      console.error('Failed to delete invite:', err);
+      alert('Failed to revoke code.');
+    }
+  };
+
   const [hostProfile, setHostProfile] = useState<any>(null);
 
   useEffect(() => {
@@ -756,22 +899,29 @@ export default function Profile({
       setMyGuests(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
+    // Fetch my active invites
+    const invitesQ = query(collection(db, 'invites'), where('createdBy', '==', user.uid));
+    const unsubInvites = onSnapshot(invitesQ, (snapshot) => {
+      setActiveInvites(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
     // Fetch my host profile if I have one
+    let unsubHost: (() => void) | null = null;
     if (profile?.hostId) {
-      const unsubHost = onSnapshot(doc(db, 'users', profile.hostId), (docSnap) => {
+      unsubHost = onSnapshot(doc(db, 'users', profile.hostId), (docSnap) => {
         if (docSnap.exists()) {
           setHostProfile({ id: docSnap.id, ...docSnap.data() });
         } else {
           setHostProfile(null);
         }
       });
-      return () => {
-        unsubGuests();
-        unsubHost();
-      };
     }
 
-    return () => unsubGuests();
+    return () => {
+      unsubGuests();
+      unsubInvites();
+      if (unsubHost) unsubHost();
+    };
   }, [user, profile?.hostId]);
 
   useEffect(() => {
@@ -896,6 +1046,7 @@ export default function Profile({
   // --- VISIBLE UI STARTS HERE ---
   // The code below draws the profile layout: the avatar, settings gear, and the tabs for Posts/Activity.
   return (
+    <>
     <div className="h-full flex flex-col bg-white overflow-y-auto">
       <div className="p-8 space-y-6">
         <div className="flex justify-between items-start">
@@ -915,6 +1066,120 @@ export default function Profile({
             <Settings size={20} />
           </button>
         </div>
+
+        {showInviteDrawer && (
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
+            <div 
+              className="absolute inset-0 bg-stone-900/40 backdrop-blur-sm"
+              onClick={() => setShowInviteDrawer(false)}
+            />
+            <div className="relative w-full max-w-md bg-white rounded-[2.5rem] shadow-2xl p-8 overflow-y-auto max-h-[90vh] animate-in fade-in slide-in-from-bottom-8 duration-300 flex flex-col no-scrollbar z-50">
+              <div className="flex items-center gap-4 mb-6 flex-none">
+                <button 
+                  onClick={() => setShowInviteDrawer(false)}
+                  className="p-3 bg-stone-100 hover:bg-stone-200 rounded-2xl text-stone-600 transition-colors"
+                >
+                  <X size={20} />
+                </button>
+                <h3 className="serif text-2xl font-bold text-stone-850">Invite Neighbors</h3>
+              </div>
+
+              <div className="space-y-6 overflow-y-auto pr-1 flex-1 no-scrollbar">
+                {/* Section 1: Ticket Creator preview */}
+                <div className="bg-stone-50 border border-stone-200/80 rounded-[2rem] p-6 space-y-4">
+                  <div className="text-center space-y-2">
+                    <span className="text-[9px] font-black uppercase tracking-[0.2em] text-stone-400">Draft Ticket</span>
+                    <div className="bg-white border-2 border-dashed border-[#c1a077]/40 rounded-2xl py-3 px-4 flex items-center justify-between shadow-sm w-full gap-2">
+                      <input
+                        type="text"
+                        value={draftCode}
+                        onChange={(e) => {
+                          const cleaned = e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '');
+                          setDraftCode(cleaned);
+                          setGeneratingError('');
+                        }}
+                        className="text-base font-mono font-bold tracking-wider text-stone-850 bg-transparent border-none outline-none focus:ring-0 focus:outline-none w-full placeholder:text-stone-300 mr-2"
+                        placeholder="e.g. cozy-teapot-12"
+                      />
+                      <button
+                        onClick={handleShuffleInviteCode}
+                        className="p-2.5 bg-stone-100 hover:bg-stone-200 rounded-xl text-stone-600 transition-colors border border-stone-200 flex-shrink-0"
+                        title="Shuffle Code"
+                        type="button"
+                      >
+                        <Sparkles size={16} className="text-amber-500" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-black uppercase tracking-widest text-stone-400 ml-2">Personal Memo (Optional)</label>
+                    <input 
+                      type="text" 
+                      placeholder="e.g. For Bob from the bakery..."
+                      value={inviteMemo}
+                      onChange={(e) => setInviteMemo(e.target.value)}
+                      className="w-full bg-white border border-stone-200 rounded-xl px-4 py-3 text-xs outline-none focus:border-stone-400"
+                    />
+                  </div>
+
+                  <button
+                    disabled={generatingInvite || !draftCode}
+                    onClick={handleCreateInvite}
+                    className="w-full py-4 bg-stone-900 hover:bg-black text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-md transition-all active:scale-[0.98] disabled:opacity-50"
+                  >
+                    {generatingInvite ? 'Generating...' : 'Confirm & Create Invite'}
+                  </button>
+                  
+                  {generatingError && (
+                    <p className="text-center text-xs text-red-500 font-medium mt-2">{generatingError}</p>
+                  )}
+                </div>
+
+                {/* Section 2: Active PENDING codes */}
+                <div className="space-y-3">
+                  <h4 className="text-[10px] font-black uppercase tracking-widest text-stone-400 ml-2">Active Invitations ({activeInvites.filter(i => i.status === 'PENDING').length})</h4>
+                  <div className="space-y-2">
+                    {activeInvites.filter(i => i.status === 'PENDING').map(invite => (
+                      <div key={invite.id} className="bg-white border border-stone-150 rounded-2xl p-4 flex items-center justify-between shadow-sm">
+                        <div className="min-w-0 pr-2">
+                          <div className="font-mono font-bold text-xs text-stone-850 tracking-wider truncate">{invite.code}</div>
+                          {invite.memo && (
+                            <div className="text-[10px] text-stone-400 italic truncate mt-0.5">Memo: {invite.memo}</div>
+                          )}
+                        </div>
+                        <div className="flex gap-2 shrink-0">
+                          <button
+                            onClick={() => {
+                              const shareLink = `${window.location.origin}/?code=${invite.code}`;
+                              navigator.clipboard.writeText(shareLink);
+                              alert('Invite link copied to clipboard:\n' + shareLink);
+                            }}
+                            className="px-3 py-1.5 bg-[#F3F1EB] hover:bg-stone-200 rounded-lg text-[9px] font-black uppercase tracking-widest text-stone-600"
+                          >
+                            Copy Link
+                          </button>
+                          <button
+                            onClick={() => handleDeleteInvite(invite.code)}
+                            className="p-1.5 bg-stone-100 hover:bg-red-50 text-stone-450 hover:text-red-500 rounded-lg transition-all border border-stone-200"
+                            title="Revoke Invite"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {activeInvites.filter(i => i.status === 'PENDING').length === 0 && (
+                      <div className="text-center py-6 text-[10px] text-stone-400 italic bg-stone-50/50 rounded-2xl border border-dashed border-stone-150">
+                        No active invites. Generate one above!
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {showSettings && (
           <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
@@ -1603,6 +1868,30 @@ export default function Profile({
                         />
                       </div>
                     </div>
+
+                    <div className="bg-white p-4 rounded-2xl border border-stone-100 flex items-center justify-between gap-4">
+                      <div className="flex gap-3 items-center">
+                        <div className="p-2 rounded-xl bg-stone-50 text-stone-600 border border-stone-100">
+                          <Clock size={18} />
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-[11px] font-bold text-stone-800 uppercase tracking-widest leading-none mb-1">Skip Intro Animation</span>
+                          <span className="text-[10px] text-stone-400 font-medium leading-tight max-w-[280px]">
+                            Skip the Polynesian-style trust ring animation when opening the app.
+                          </span>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center">
+                        <input
+                          type="checkbox"
+                          checked={!!profile.skipIntroAnimation}
+                          onChange={(e) => updateSkipIntroAnimation(e.target.checked)}
+                          disabled={updatingIntroPref}
+                          className="w-4 h-4 text-stone-900 border-stone-300 rounded focus:ring-stone-900 cursor-pointer accent-stone-900"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -1623,14 +1912,16 @@ export default function Profile({
                     {profile.isOrganization ? 'Switch to Individual Profile' : 'Register as Organization'}
                   </button>
 
-                  <div className="flex flex-col gap-2">
-                    <SeedData onComplete={onSeedComplete} />
-                    {seedMessage && (
-                      <div className={`text-center text-xs font-bold ${seedMessage.includes('failed') ? 'text-red-500' : 'text-green-500'}`}>
-                        {seedMessage}
-                      </div>
-                    )}
-                  </div>
+                  {profile?.isAdmin && (
+                    <div className="flex flex-col gap-2">
+                      <SeedData onComplete={onSeedComplete} />
+                      {seedMessage && (
+                        <div className={`text-center text-xs font-bold ${seedMessage.includes('failed') ? 'text-red-500' : 'text-green-500'}`}>
+                          {seedMessage}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <button 
                     onClick={restartOnboarding}
@@ -1640,7 +1931,7 @@ export default function Profile({
                     Restart Welcome Tour
                   </button>
 
-                  {isGuardian && onNavigateToGuardian && (
+                  {profile?.isAdmin && onNavigateToGuardian && (
                     <button 
                       onClick={() => {
                         setShowSettings(false);
@@ -1836,27 +2127,24 @@ export default function Profile({
           </h3>
           
           <div className="space-y-6">
-            {/* My Invite Code */}
-            <div className="bg-white p-4 rounded-2xl shadow-sm border border-stone-100 flex items-center justify-between">
-              <div>
-                <h4 className="text-[10px] font-black uppercase tracking-widest text-stone-400 mb-1">My Invite Code</h4>
-                <div className="text-xl font-mono font-bold tracking-widest text-stone-800">
-                  {profile.inviteCode || 'N/A'}
+            {/* Invite Center */}
+            <div className="bg-white p-5 rounded-2xl shadow-sm border border-stone-100 flex flex-col gap-3">
+              <div className="flex justify-between items-start">
+                <div className="space-y-1">
+                  <h4 className="text-[10px] font-black uppercase tracking-widest text-stone-400">Invite Neighbors</h4>
+                  <p className="text-[10px] text-stone-400 leading-snug">Generate unique, one-time passcodes for friends.</p>
                 </div>
+                <button
+                  onClick={() => setShowInviteDrawer(true)}
+                  className="px-4 py-2.5 bg-stone-900 hover:bg-black text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-md transition-all active:scale-95 shrink-0"
+                >
+                  Manage Invites
+                </button>
               </div>
-              <button 
-                onClick={() => {
-                  if (profile.inviteCode) {
-                    navigator.clipboard.writeText(profile.inviteCode);
-                  }
-                }}
-                className="px-4 py-2 bg-stone-100 hover:bg-stone-200 rounded-xl text-xs font-bold text-stone-600 transition-colors uppercase tracking-widest"
-              >
-                Copy
-              </button>
             </div>
 
-            {/* My Host */}
+            {/* My Host — hidden for the founder (hostId === 'founder') */}
+            {profile.hostId !== 'founder' && (
             <div className="space-y-3">
               <h4 className="text-[10px] font-black uppercase tracking-widest text-stone-400">Invited By (My Host)</h4>
               
@@ -1910,6 +2198,7 @@ export default function Profile({
                 </div>
               )}
             </div>
+            )}
 
             {/* My Guests */}
             {myGuests.length > 0 && (
@@ -2000,12 +2289,56 @@ export default function Profile({
 
         <button 
           onClick={logout}
-          className="w-full py-4 border-2 border-stone-200 rounded-3xl text-red-500 font-bold text-xs uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-red-50 hover:border-red-200 transition-all mb-20"
+          className="w-full py-4 border-2 border-stone-200 rounded-3xl text-red-500 font-bold text-xs uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-red-50 hover:border-red-200 transition-all"
         >
           <LogOut size={16} />
           Log Out
         </button>
+
+        {/* ═══════════════════════════════════════════════════════ */}
+        {/* APP STORE COMPLIANCE: Delete Account & Legal Links      */}
+        {/* Apple requires: account deletion + links to ToS/Privacy */}
+        {/* ═══════════════════════════════════════════════════════ */}
+        <div className="mt-4 mb-20 space-y-3">
+          {/* Legal Links */}
+          <div className="flex items-center justify-center gap-4 text-[9px] font-bold uppercase tracking-widest text-stone-400">
+            <a 
+              href="/terms.html" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 hover:text-stone-600 transition-colors"
+            >
+              <FileText size={10} />
+              Terms of Service
+            </a>
+            <span className="text-stone-300">•</span>
+            <a 
+              href="/privacy.html" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 hover:text-stone-600 transition-colors"
+            >
+              <FileText size={10} />
+              Privacy Policy
+            </a>
+          </div>
+
+          {/* Delete Account — Apple requires this since June 2022 */}
+          <button
+            onClick={() => setShowDeleteAccount(true)}
+            className="w-full py-3 text-[10px] font-bold uppercase tracking-widest text-stone-400 hover:text-[#C86A51] transition-colors flex items-center justify-center gap-2"
+          >
+            <AlertTriangle size={12} />
+            Delete My Account
+          </button>
+        </div>
       </div>
     </div>
+
+    {/* Delete Account Sheet — App Store compliance (Apple requires since June 2022) */}
+    {showDeleteAccount && (
+      <DeleteAccountSheet onClose={() => setShowDeleteAccount(false)} />
+    )}
+    </>
   );
 }

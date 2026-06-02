@@ -30,6 +30,7 @@ import { X, Send, Heart } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, addDoc, serverTimestamp, doc, updateDoc, increment } from 'firebase/firestore';
 import { useAuth } from '../hooks/useAuth';
+import { logEvent } from '../lib/analytics';
 
 interface GratitudeFlowProps {
   recipientId: string;
@@ -76,6 +77,13 @@ export default function GratitudeFlow({
         itemTitle,
         text: `${selectedVibe} ${text.trim()}`,
         createdAt: serverTimestamp()
+      });
+
+      logEvent('gratitude_expressed', {
+        to_user_id: recipientId,
+        vibe_emoji: selectedVibe,
+        item_id: itemId,
+        item_type: itemType || null
       });
 
       // Increment the recipient's exchange count

@@ -30,6 +30,7 @@
  */
 import { db } from '../lib/firebase';
 import { collection, query, where, getDocs, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { logEvent } from '../lib/analytics';
 
 /**
  * getOrCreateChat():
@@ -86,6 +87,10 @@ export async function getOrCreateChat(currentUserId: string, otherUserId: string
       archivedBy: [],                      // UNARCHIVE for both — new activity revives the chat
       unreadBy: [otherUserId]              // Mark as unread for the OTHER user → triggers their badge
     });
+    logEvent('chat_initiated', {
+      is_new: false,
+      has_item: !!itemId
+    });
     return existingChat.id;
   } else {
     // NEW CHAT: Create a fresh conversation document.
@@ -97,6 +102,10 @@ export async function getOrCreateChat(currentUserId: string, otherUserId: string
       updatedAt: serverTimestamp(),
       archivedBy: [],                      // Nobody has archived it yet
       unreadBy: [otherUserId]              // The other user hasn't seen it yet
+    });
+    logEvent('chat_initiated', {
+      is_new: true,
+      has_item: !!itemId
     });
     return newChatRef.id;
   }

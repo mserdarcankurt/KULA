@@ -5,10 +5,28 @@
  * to every component in the app. This way, any screen can easily check: 
  * "Is anyone logged in?" or "What is the name of the current user?".
  */
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged, User } from '../lib/firebase';
+import { signInWithCredential, GoogleAuthProvider, signInAnonymously, OAuthProvider } from 'firebase/auth';
+import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
+import { isNative } from '../lib/platform';
+import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { doc, getDoc, setDoc, serverTimestamp, onSnapshot, updateDoc } from 'firebase/firestore';
 import { UserProfile } from '../types';
+import { logEvent } from '../lib/analytics';
+
+/**
+ * FOUNDER_UIDS:
+ * These UIDs always get isAdmin: true and bypass onboarding.
+ * This prevents the founder from getting locked out of their own app
+ * after a database reset, seed wipe, or profile corruption.
+ * 
+ * TODO [POST-ALPHA]: Move this to a Firestore 'admins' collection or
+ * Firebase custom claims so it's not hardcoded in the client.
+ */
+const FOUNDER_UIDS = [
+  'PNS6UdUMDXb2y37tsPhhaxHBpEM2', // srdrcnkurt@gmail.com — Serdar Kurt (founder)
+];
 
 /**
  * AuthContextType:
@@ -19,11 +37,8 @@ interface AuthContextType {
   user: User | null;         // The raw Firebase Auth user object (emails, tokens, etc.)
   profile: UserProfile | null; // Our custom KULA profile (bio, rating, circles)
   loading: boolean;          // True while we are waiting for Firebase to respond
-  signIn: () => Promise<void>;
+  signIn: (provider?: 'google' | 'apple') => Promise<void>;
   logout: () => Promise<void>;
-  isGuardian: boolean;       // A special "Admin" mode for developers to bypass login
-  enableGuardianMode: () => void;
-  enableTestUserMode: () => void;
   updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
 }
 
@@ -40,109 +55,82 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isGuardian, setIsGuardian] = useState(localStorage.getItem('kula-guardian-mode') === 'true');
-  const [isTestUser, setIsTestUser] = useState(localStorage.getItem('kula-test-user-mode') === 'true');
 
-  /**
-   * enableGuardianMode():
-   * This is a "Cheat Code" for developers. 
-   * It creates a mock profile so we can test the app without actually logging into Google.
-   */
-  const enableGuardianMode = () => {
-    localStorage.removeItem('kula-test-user-mode');
-    setIsTestUser(false);
-    localStorage.setItem('kula-guardian-mode', 'true');
-    setIsGuardian(true);
-    setUser({ uid: 'guardian-uid', displayName: 'Neighborhood Guardian' } as User);
-    
-    const mockProfile: UserProfile = {
-      uid: 'guardian-uid',
-      displayName: 'Neighborhood Guardian',
-      photoURL: 'https://api.dicebear.com/7.x/avataaars/svg?seed=guardian',
-      bio: 'I watch over the neighborhood to ensure everyone is safe and connected.',
-      rating: 5,
-      reviewCount: 100,
-      createdAt: serverTimestamp(),
-      isAdmin: true,
-      defaultReach: ['VICINITY'],
-      joinedCircles: ['general'],
-      hasCompletedOnboarding: true,
-      hasCompletedInteractiveTour: true,
-      inviteCode: 'GUARDIAN',
-      hostStatus: 'APPROVED',
-      hostId: 'founder'
-    };
-    setProfile(mockProfile);
-    setLoading(false);
-  };
+  // Re-entry guard: prevents signIn() from being called while it's already in progress.
+  // This is critical on native iOS where the Google Sign-In sheet dismiss can
+  // inadvertently re-trigger the sign-in flow.
+  const signInInProgress = useRef(false);
 
-  /**
-   * enableTestUserMode():
-   * Cheat code for testing the onboarding flow end-to-end.
-   */
-  const enableTestUserMode = () => {
-    localStorage.removeItem('kula-guardian-mode');
-    setIsGuardian(false);
-    localStorage.setItem('kula-test-user-mode', 'true');
-    setIsTestUser(true);
-    setUser({ uid: 'test-user-uid', displayName: 'Test Neighbor' } as User);
 
-    const mockProfile: UserProfile = {
-      uid: 'test-user-uid',
-      displayName: 'Test Neighbor',
-      photoURL: 'https://api.dicebear.com/7.x/avataaars/svg?seed=test',
-      bio: '',
-      rating: 0,
-      reviewCount: 0,
-      createdAt: serverTimestamp(),
-      isAdmin: false,
-      defaultReach: ['VICINITY'],
-      joinedCircles: [],
-      hasCompletedOnboarding: false,
-      onboardingStep: null,
-      hostStatus: 'NONE',
-      inviteCode: 'TESTER'
-    };
-    setProfile(mockProfile);
-    setLoading(false);
-  };
 
   const updateProfile = async (updates: Partial<UserProfile>) => {
-    if (isGuardian || isTestUser || profile?.uid === 'test-user-uid' || profile?.uid === 'guardian-uid') {
-      setProfile(prev => prev ? { ...prev, ...updates } : null);
-      return;
-    }
     if (user) {
       await updateDoc(doc(db, 'users', user.uid), updates);
     }
   };
 
-  // Effect to handle dev-only tools
+  // Expose test login helper to window during local development strictly for headless automated E2E testing.
+  // This is completely tree-shaken and stripped from production builds.
   useEffect(() => {
     if (import.meta.env.DEV) {
-      (window as any).enableGuardianMode = enableGuardianMode;
-      (window as any).enableTestUserMode = enableTestUserMode;
+      (window as any).__runTestLogin = async () => {
+        setLoading(true);
+        try {
+          await signInAnonymously(auth);
+        } catch (err) {
+          console.error("Test login helper failed:", err);
+          setLoading(false);
+          throw err;
+        }
+      };
     }
-    if (isGuardian && !profile) {
-      enableGuardianMode();
-    } else if (isTestUser && !profile) {
-      enableTestUserMode();
-    }
-  }, [isGuardian, isTestUser]);
+  }, []);
 
   /**
-   * The Master Auth Listener:
-   * This useEffect runs once when the app starts.
-   * It asks Firebase: "Hey, is there a session saved in this browser?"
+   * Redirect Result Handler:
+   * Handle redirect result (Only relevant for web if using redirect, but we use popup now)
    */
   useEffect(() => {
+    // getRedirectResult is no longer used since native uses the native plugin
+    // and web uses popup. Kept here empty just in case.
+  }, []);
+
+  /**
+    * The Master Auth Listener:
+    * This useEffect runs once when the app starts.
+    * It asks Firebase: "Hey, is there a session saved in this browser?"
+    *
+    * SAFETY TIMEOUT:
+    * On native iOS (Capacitor WebView), Firebase Auth can sometimes take longer
+    * to initialize because of the capacitor://localhost origin. We add a safety
+    * timeout that stops the loading spinner after 10 seconds if onAuthStateChanged
+    * never fires — this prevents the app from being stuck on a forever-spinner.
+    */
+   useEffect(() => {
+    console.log('[KULA AUTH] Setting up onAuthStateChanged listener...');
+    let authFired = false;
+
+    // Safety timeout: if Firebase Auth doesn't respond within 10 seconds,
+    // assume no user is logged in and show the Welcome screen.
+    const safetyTimeout = setTimeout(() => {
+      if (!authFired) {
+        console.warn('[KULA AUTH] Safety timeout reached (10s) — Firebase Auth did not respond. Showing Welcome screen.');
+        setLoading(false);
+      }
+    }, 10000);
+
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      // If we are in guardian mode, we ignore the real Firebase auth.
-      if (isGuardian) return; 
+      authFired = true;
+      clearTimeout(safetyTimeout);
+      console.log('[KULA AUTH] onAuthStateChanged fired. User:', user ? user.uid : 'null (not logged in)');
+
+      // If we are in guardian or test user mode, we ignore the real Firebase auth.
+
       
       setUser(user); // Save the raw user object (or null if logged out)
 
       if (user) {
+        console.log('[KULA AUTH] User found, loading profile from Firestore...');
         // If a user exists, we look up their custom KULA profile in Firestore.
         const profileRef = doc(db, 'users', user.uid);
         const privateRef = doc(db, 'users_private', user.uid);
@@ -157,6 +145,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               exactHomeLocation: privateData?.exactHomeLocation || null,
               savedLocations: privateData?.savedLocations || []
             });
+            console.log('[KULA AUTH] Profile loaded successfully. Loading complete.');
             setLoading(false);
           }
         };
@@ -164,10 +153,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const unsubProfile = onSnapshot(profileRef, async (profileSnap) => {
           if (!profileSnap.exists()) {
             /**
-             * NEW USER REGISTRATION:
-             * If the user just logged in for the first time, they won't have a profile.
-             * We create a fresh one here with default community settings.
-             */
+              * NEW USER REGISTRATION:
+              * If the user just logged in for the first time, they won't have a profile.
+              * We create a fresh one here with default community settings.
+              */
+            console.log('[KULA AUTH] New user detected — creating profile...');
+            const isFounder = FOUNDER_UIDS.includes(user.uid) || (import.meta.env.DEV && user.isAnonymous);
             const newProfile: UserProfile = {
               uid: user.uid,
               displayName: user.displayName || 'Anonymous User',
@@ -176,15 +167,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               rating: 0,
               reviewCount: 0,
               createdAt: serverTimestamp(),
-              isAdmin: false,
+              isAdmin: isFounder,
               defaultReach: ['VICINITY'],
-              joinedCircles: [],
-              hasCompletedOnboarding: false,
-              onboardingStep: null,       // Storied Journey: starts from the beginning
-              hasCompletedInteractiveTour: false,
-              // Generate a random 6-character invite code for them to share
-              inviteCode: Math.random().toString(36).substr(2, 6).toUpperCase(),
-              hostStatus: 'NONE'
+              joinedCircles: isFounder ? ['general'] : [],
+              hasCompletedOnboarding: isFounder,
+              onboardingStep: isFounder ? 'COMPLETE' : null,
+              hasCompletedInteractiveTour: isFounder,
+              hostStatus: isFounder ? 'APPROVED' : 'NONE',
+              ...(isFounder ? { hostId: 'founder', skipIntroAnimation: true } : {})
             };
             const newPrivate = {
               exactHomeLocation: null,
@@ -199,6 +189,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           } else {
             // If they already have a profile, just load it into state.
             publicData = profileSnap.data() as UserProfile;
+
+            // FOUNDER SAFETY NET: If a founder's profile somehow lost admin/onboarding status
+            // (e.g., after a seed wipe), auto-repair it.
+            // TODO [POST-ALPHA]: Replace with Firebase custom claims for proper admin management.
+            if (FOUNDER_UIDS.includes(user.uid) && !publicData.isAdmin) {
+              console.warn('[KULA] Founder profile missing admin flag — auto-repairing...');
+              const founderFix: Partial<UserProfile> = {
+                isAdmin: true,
+                hasCompletedOnboarding: true,
+                onboardingStep: 'COMPLETE' as any,
+                hostStatus: 'APPROVED',
+                hostId: publicData.hostId || 'founder',
+                skipIntroAnimation: true,
+              };
+              updateDoc(profileRef, founderFix).catch(err =>
+                console.error('Failed to auto-repair founder profile:', err)
+              );
+              publicData = { ...publicData, ...founderFix };
+            }
+
             mergeAndSetProfile();
           }
         });
@@ -219,24 +229,104 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         };
       } else {
         // If no user is logged in, clear the profile and stop loading.
+        console.log('[KULA AUTH] No user logged in. Showing Welcome screen.');
         setProfile(null);
         setLoading(false);
       }
     });
 
-    // Clean up the auth listener when the component is destroyed
-    return unsubscribe;
+    // Clean up the auth listener and safety timeout when the component is destroyed
+    return () => {
+      clearTimeout(safetyTimeout);
+      unsubscribe();
+    };
   }, []);
 
   /**
    * signIn():
-   * Triggers the Google Login popup.
+   * Triggers Google Login.
+   *
+   * NATIVE vs. WEB:
+   *   - On NATIVE (iOS/Android): Uses `@capacitor-firebase/authentication` to trigger
+   *     the native iOS Google Sign-In dialog. With `skipNativeAuth: true` in Capacitor config,
+   *     the plugin only returns the credential (idToken) without signing in natively.
+   *     We then call `signInWithCredential` ourselves so the JS SDK's `onAuthStateChanged` fires.
+   *   - On WEB (browser): Uses `signInWithPopup` which opens a small Google
+   *     login window that overlays the current page.
+   *
+   * RE-ENTRY GUARD: Uses a ref to prevent the function from being called again
+   * while a sign-in is already in progress (prevents the iOS dismiss-and-retrigger loop).
    */
-  const signIn = async () => {
+  const signIn = async (provider: 'google' | 'apple' = 'google') => {
+    // Prevent re-entry: if signIn is already running, bail out.
+    if (signInInProgress.current) {
+      console.warn('[KULA AUTH] signIn() called while already in progress — ignoring.');
+      return;
+    }
+    signInInProgress.current = true;
+    logEvent('login_started', { provider });
+
     try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (error) {
-      console.error('Sign in error:', error);
+      if (isNative()) {
+        if (provider === 'apple') {
+          console.log('[KULA AUTH] Triggering Native Apple Sign-In...');
+          const result = await FirebaseAuthentication.signInWithApple();
+          if (result.credential?.idToken) {
+            console.log('[KULA AUTH] Got Native Apple ID token, signing into Firebase JS SDK...');
+            const appleProvider = new OAuthProvider('apple.com');
+            const credential = appleProvider.credential({
+              idToken: result.credential.idToken,
+              rawNonce: result.credential.nonce,
+            });
+            const userCredential = await signInWithCredential(auth, credential);
+            console.log('[KULA AUTH] Firebase JS SDK Apple sign-in successful! UID:', userCredential.user.uid);
+            logEvent('login_completed', { provider: 'apple', platform: 'native' });
+            try {
+              await Haptics.impact({ style: ImpactStyle.Light });
+            } catch (_) {}
+          } else {
+            console.warn('[KULA AUTH] Native Apple Sign-In cancelled or no token received.');
+          }
+        } else {
+          console.log('[KULA AUTH] Triggering Native Google Sign-In...');
+          const result = await FirebaseAuthentication.signInWithGoogle();
+          if (result.credential?.idToken) {
+            console.log('[KULA AUTH] Got Native Google ID token, signing into Firebase JS SDK...');
+            const credential = GoogleAuthProvider.credential(result.credential.idToken);
+            const userCredential = await signInWithCredential(auth, credential);
+            console.log('[KULA AUTH] Firebase JS SDK Google sign-in successful! UID:', userCredential.user.uid);
+            logEvent('login_completed', { provider: 'google', platform: 'native' });
+            try {
+              await Haptics.impact({ style: ImpactStyle.Light });
+            } catch (_) {}
+          } else {
+            console.warn('[KULA AUTH] Native Google Sign-In cancelled or no token received.');
+          }
+        }
+      } else {
+        if (provider === 'apple') {
+          console.log('[KULA AUTH] Triggering Web Apple Sign-In Popup...');
+          const appleProvider = new OAuthProvider('apple.com');
+          await signInWithPopup(auth, appleProvider);
+          logEvent('login_completed', { provider: 'apple', platform: 'web' });
+        } else {
+          console.log('[KULA AUTH] Triggering Web Google Sign-In Popup...');
+          await signInWithPopup(auth, googleProvider);
+          logEvent('login_completed', { provider: 'google', platform: 'web' });
+        }
+      }
+    } catch (error: any) {
+      console.error(`[KULA AUTH] Sign in error (${provider}):`, error);
+      const errMsg = error?.message || String(error);
+      const isCancellation = errMsg.toLowerCase().includes('cancel') || errMsg.toLowerCase().includes('canceled') || errMsg.toLowerCase().includes('cancelled');
+      if (!isCancellation) {
+        alert(
+          `Sign-in failed (${provider}): ${errMsg}\n\n` +
+          `Note: On iOS Simulator, native Apple Sign-In requires an iCloud sandbox account in device settings.`
+        );
+      }
+    } finally {
+      signInInProgress.current = false;
     }
   };
 
@@ -246,14 +336,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
    */
   const logout = async () => {
     try {
-      if (isGuardian || isTestUser) {
-        localStorage.removeItem('kula-guardian-mode');
-        localStorage.removeItem('kula-test-user-mode');
-        setIsGuardian(false);
-        setIsTestUser(false);
-        setProfile(null);
-        return;
-      }
+      logEvent('logout');
       await signOut(auth);
     } catch (error) {
       console.error('Logout error:', error);
@@ -265,7 +348,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
    * Any child component inside <AuthProvider> can now access these.
    */
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signIn, logout, isGuardian, enableGuardianMode, enableTestUserMode, updateProfile }}>
+    <AuthContext.Provider value={{ user, profile, loading, signIn, logout, updateProfile }}>
       {children}
     </AuthContext.Provider>
   );

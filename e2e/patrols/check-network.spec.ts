@@ -7,10 +7,10 @@ test('Check Network Tab inside Community Drawer', async ({ page }) => {
 
   await page.goto('http://localhost:5173/');
   
-  // Wait for the window function to be available and enable Guardian Mode
-  await page.waitForFunction(() => typeof (window as any).enableGuardianMode === 'function', { timeout: 10000 });
-  await page.evaluate(() => {
-    (window as any).enableGuardianMode();
+  // Wait for the test login helper to be available and run it
+  await page.waitForFunction(() => typeof (window as any).__runTestLogin === 'function', { timeout: 10000 });
+  await page.evaluate(async () => {
+    await (window as any).__runTestLogin();
   });
 
   // Wait for landing page loading

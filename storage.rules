@@ -1,0 +1,15 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /items/{allPaths=**} {
+      // Allow read access to anyone (public sharing app)
+      allow read: if true;
+      // Allow write access only to authenticated users
+      allow write: if request.auth != null;
+    }
+    // Fallback security rule
+    match /{allPaths=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

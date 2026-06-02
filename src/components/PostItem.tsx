@@ -40,14 +40,16 @@
  * CALLED BY: App.tsx (the 'post' tab), Circles.tsx (post within circle)
  */
 import React, { useState, useEffect } from 'react';
-import { db } from '../lib/firebase';
+import { db, storage } from '../lib/firebase';
 import { collection, addDoc, serverTimestamp, query, getDocs, where, getDoc, doc } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { useAuth } from '../hooks/useAuth';
 import { Send, Image as ImageIcon, MapPin, X, Users, Globe, Shield, Target, Settings, HeartHandshake, Camera, Video, Trash2, Plus, Home, Navigation, Coffee, Calendar, Clock, Sparkles } from 'lucide-react';
 import { Circle, KulaReachType, ItemType, SavedLocation, TrustPrivacyLevel, SharingMode } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { Joyride, Step, EventData, STATUS } from 'react-joyride';
 import { updateDoc } from 'firebase/firestore';
+import { logEvent } from '../lib/analytics';
 
 // Location source mode for post creation
 type LocationMode = 'NEIGHBORHOOD' | 'CURRENT_GPS' | 'VENUE' | 'SAVED_LOCATION';
@@ -90,7 +92,7 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
   const [neededParticipants, setNeededParticipants] = useState(3);
   const [reachTypes, setReachTypes] = useState<KulaReachType[]>(initialCircleId ? ['SPECIFIC_CIRCLES'] : ['VICINITY']);
   const [targetCircles, setTargetCircles] = useState<string[]>(initialCircleId ? [initialCircleId] : []);
-  const [media, setMedia] = useState<{ url: string; type: 'image' | 'video' }[]>([]);
+  const [media, setMedia] = useState<{ url: string; path: string; type: 'image' | 'video' }[]>([]);
   const [shareLocation, setShareLocation] = useState(true);
   const [runTour, setRunTour] = useState(false);
   const [availableFrom, setAvailableFrom] = useState('');
@@ -98,6 +100,7 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
   const [eventTime, setEventTime] = useState('');
   const [eventEndTime, setEventEndTime] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [visibilityReach, setVisibilityReach] = useState<TrustPrivacyLevel>('PUBLIC');
   const [sharingMode, setSharingMode] = useState<SharingMode | undefined>(undefined);
 
@@ -209,20 +212,50 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
     }
   }, [isLocationMandatory]);
 
-  const handleMediaUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !user) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const url = event.target?.result as string;
-      setMedia(prev => [...prev, { url, type: file.type.startsWith('video') ? 'video' : 'image' }]);
-    };
-    reader.readAsDataURL(file);
+    setUploading(true);
+    try {
+      const extension = file.name.split('.').pop() || 'jpg';
+      const storagePath = `items/uploads/${user.uid}/${Date.now()}_${Math.random().toString(36).substring(7)}.${extension}`;
+      const storageRef = ref(storage, storagePath);
+
+      console.log(`[KULA STORAGE] Uploading file to path: ${storagePath}...`);
+      await uploadBytes(storageRef, file);
+      const downloadUrl = await getDownloadURL(storageRef);
+
+      setMedia(prev => [...prev, {
+        url: downloadUrl,
+        path: storagePath,
+        type: file.type.startsWith('video') ? 'video' : 'image'
+      }]);
+      console.log(`[KULA STORAGE] Upload complete. Download URL: ${downloadUrl}`);
+    } catch (err) {
+      console.error('[KULA STORAGE] Upload failed:', err);
+      alert('Failed to upload image. Please try again.');
+    } finally {
+      setUploading(false);
+    }
   };
 
-  const removeMedia = (index: number) => {
+  const removeMedia = async (index: number) => {
+    const mediaItem = media[index];
+    if (!mediaItem) return;
+
+    // Remove from state immediately for responsive UI
     setMedia(prev => prev.filter((_, i) => i !== index));
+
+    try {
+      console.log(`[KULA STORAGE] Deleting file from storage: ${mediaItem.path}`);
+      const storageRef = ref(storage, mediaItem.path);
+      await deleteObject(storageRef);
+      console.log(`[KULA STORAGE] File deleted successfully.`);
+    } catch (err) {
+      // Log error but don't disrupt user flow (the cleanup script will get it anyway)
+      console.warn('[KULA STORAGE] Failed to delete removed file from storage:', err);
+    }
   };
 
   useEffect(() => {
@@ -297,7 +330,7 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const finalTitle = type === 'FLOW' ? (description.slice(0, 60) || 'Flow Update') : title;
-    if (!user || !description || (type !== 'FLOW' && !title)) return;
+    if (!user || !description || (type !== 'FLOW' && !title) || uploading) return;
 
     setSubmitting(true);
     try {
@@ -331,6 +364,18 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
         eventEndTime: type === 'JOIN' && eventEndTime ? new Date(eventEndTime) : null,
         venueName: type === 'JOIN' && venueName ? venueName : null,
       });
+
+      logEvent('item_created', {
+        type,
+        category: type === 'FLOW' ? 'Community' : category,
+        sharingMode: (type === 'SHARE' || type === 'ASK') && sharingMode ? sharingMode : null,
+        has_images: media.some(m => m.type === 'image'),
+        has_videos: media.some(m => m.type === 'video'),
+        visibility_reach: visibilityReach,
+        reach_types_count: reachTypes.length,
+        circle_id: initialCircleId || null
+      });
+
       onSuccess();
     } catch (err) {
       console.error('Error posting item:', err);
@@ -630,11 +675,15 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
                   />
                 </div>
               </div>
-              {(availableFrom || expiresAt) && (
+              {(availableFrom || expiresAt) ? (
                 <p className="text-[9px] text-stone-400 italic px-1">
-                  {availableFrom && !expiresAt && `Available from ${new Date(availableFrom).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`}
+                  {availableFrom && !expiresAt && `Available from ${new Date(availableFrom).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })} (expires 30 days after creation by default)`}
                   {!availableFrom && expiresAt && `Available until ${new Date(expiresAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`}
                   {availableFrom && expiresAt && `Available ${new Date(availableFrom).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })} → ${new Date(expiresAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}`}
+                </p>
+              ) : (
+                <p className="text-[9px] text-stone-400 italic px-1">
+                  Note: Posts automatically expire 30 days after creation unless a specific date is set.
                 </p>
               )}
             </div>
@@ -1130,10 +1179,10 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
 
         <button 
           type="submit"
-          disabled={submitting || !title || !description || (isLocationMandatory && !location)}
+          disabled={submitting || uploading || (type !== 'FLOW' && !title) || !description || (isLocationMandatory && !location)}
           className="w-full py-6 bg-stone-900 text-white rounded-[2rem] font-bold text-lg shadow-xl hover:shadow-2xl transition-all hover:-translate-y-1 active:translate-y-0 disabled:opacity-50 flex items-center justify-center gap-3"
         >
-          {submitting ? 'Sharing...' : initialCircleId ? 'Share with Circle & More' : 'Share with Community'}
+          {submitting ? 'Sharing...' : uploading ? 'Uploading media...' : initialCircleId ? 'Share with Circle & More' : 'Share with Community'}
           <Send size={20} />
         </button>
       </form>

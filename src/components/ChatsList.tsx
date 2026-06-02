@@ -159,8 +159,16 @@ export default function ChatsList({ selectedChatId, onSelectChat }: ChatsListPro
     }
   };
 
-  const activeChats = chats.filter(c => !c.archivedBy?.includes(user?.uid || ''));
-  const archivedChats = chats.filter(c => c.archivedBy?.includes(user?.uid || ''));
+  const activeChats = chats.filter(c => {
+    const otherId = c.participants.find(id => id !== user?.uid);
+    if (otherId && profile?.blockedUsers?.includes(otherId)) return false;
+    return !c.archivedBy?.includes(user?.uid || '');
+  });
+  const archivedChats = chats.filter(c => {
+    const otherId = c.participants.find(id => id !== user?.uid);
+    if (otherId && profile?.blockedUsers?.includes(otherId)) return false;
+    return c.archivedBy?.includes(user?.uid || '');
+  });
   const currentChats = showArchived ? archivedChats : activeChats;
 
   if (selectedChatId) {

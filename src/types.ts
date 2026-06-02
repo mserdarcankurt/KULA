@@ -141,6 +141,7 @@ export interface UserProfile {
   reviewCount: number;                           // How many reviews received
   createdAt: any;                                // Firestore Timestamp
   isAdmin: boolean;                              // Admins bypass InviteGate, can moderate
+  fcmTokens?: string[];                          // Array of Firebase Cloud Messaging tokens
   isOrganization?: boolean;                      // Orgs get a different avatar style (shapes vs avataaars)
   isVerified?: boolean;                          // Manual verification by admin
   orgType?: 'SHELTER' | 'CHARITY' | 'SOCIAL_ENTERPRISE' | 'OTHER';
@@ -176,6 +177,8 @@ export interface UserProfile {
   neighborhoodCenter?: { lat: number; lng: number };  // Public — offset center of neighborhood circle
   neighborhoodRadius?: number;                        // Radius in meters (default: 1000)
   neighborhoodName?: string;                          // Free-text name of the district/neighborhood (entered during onboarding)
+  skipIntroAnimation?: boolean;                       // User preference to skip the introductory animation
+
 
   // ── Address Book ──
   // A list of user-defined saved locations (e.g. "Home", "Work", "Parents").

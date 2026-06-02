@@ -276,7 +276,7 @@ export default function CommunityDrawer({ isOpen, onClose, location, onNavigateT
             animate={{ opacity: 0.4 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 bg-stone-900 z-40 max-w-md mx-auto"
+            className="fixed inset-0 bg-stone-900 z-45 max-w-md mx-auto"
           />
 
           {/* Slide-Up Drawer Container */}
@@ -285,7 +285,7 @@ export default function CommunityDrawer({ isOpen, onClose, location, onNavigateT
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
             transition={{ type: 'spring', damping: 25, stiffness: 220 }}
-            className="fixed bottom-16 left-0 right-0 z-45 max-w-md mx-auto h-[82vh] bg-[#FDFBF9] border-t-2 border-stone-200 rounded-t-[2rem] flex flex-col overflow-hidden shadow-[0_-8px_30px_rgba(0,0,0,0.12)]"
+            className="fixed bottom-16 left-0 right-0 top-0 pt-[env(safe-area-inset-top)] z-50 max-w-md mx-auto bg-[#FDFBF9] border-t-2 border-stone-200 rounded-t-[2rem] flex flex-col overflow-hidden shadow-[0_-8px_30px_rgba(0,0,0,0.12)]"
           >
             {/* Visual drag handle pill */}
             <div className="w-12 h-1 bg-stone-300 rounded-full mx-auto my-3 shrink-0" />

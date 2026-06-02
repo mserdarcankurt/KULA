@@ -31,7 +31,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Item, UserProfile, Circle } from '../types';
-import { X, Send, Network, MessageCircle, MapPin, Calendar, Share, Heart, Users } from 'lucide-react';
+import { X, Send, Network, MessageCircle, MapPin, Calendar, Share, Heart, Users, Flag } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, addDoc, serverTimestamp, query, orderBy, onSnapshot, doc, updateDoc, getDoc, where } from 'firebase/firestore';
@@ -43,6 +43,8 @@ import { AnimatePresence } from 'motion/react';
 import BridgeSheet from './BridgeSheet';
 import { sendNotification } from '../lib/notifications';
 import GratitudeFlow from './GratitudeFlow';
+import ReportSheet from './ReportSheet';
+import { logEvent } from '../lib/analytics';
 
 interface Comment {
   id: string;
@@ -73,6 +75,7 @@ export function ItemDetailsSheet({ item, onClose, onViewProfile, focusComment = 
   const [gratitudeSent, setGratitudeSent] = useState(false);
   const [recipientProfile, setRecipientProfile] = useState<{ uid: string; displayName: string; photoURL?: string } | null>(null);
   const [commonCircles, setCommonCircles] = useState<Circle[]>([]);
+  const [showReportSheet, setShowReportSheet] = useState(false);
 
   const commentInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -253,6 +256,12 @@ export function ItemDetailsSheet({ item, onClose, onViewProfile, focusComment = 
         createdAt: serverTimestamp()
       });
 
+      logEvent('comment_created', {
+        item_id: item.id,
+        item_type: item.type,
+        is_reply: !!replyTo
+      });
+
       const commenterName = profile.displayName || 'A neighbor';
 
       if (replyTo) {
@@ -291,7 +300,7 @@ export function ItemDetailsSheet({ item, onClose, onViewProfile, focusComment = 
         {/* We can remove the backdrop since it's full screen, but we'll keep the DOM node empty just in case */}
         
         <div className="relative bg-white h-[100dvh] flex flex-col animate-in slide-in-from-bottom-full duration-300">
-          <div className="flex-none p-4 px-5 border-b border-stone-100 flex items-center justify-between sticky top-0 bg-white/95 backdrop-blur-md z-10">
+          <div className="flex-none pt-[calc(1rem+env(safe-area-inset-top))] pb-4 px-5 border-b border-stone-100 flex items-center justify-between sticky top-0 bg-white/95 backdrop-blur-md z-10">
             {/* Left: Back button — primary action */}
             <button 
               onClick={onClose}
@@ -301,8 +310,17 @@ export function ItemDetailsSheet({ item, onClose, onViewProfile, focusComment = 
               <span className="text-[11px] font-bold uppercase tracking-wider">Back</span>
             </button>
 
-            {/* Right: Delete (owner only) */}
+            {/* Right: Report (non-owner) or Delete (owner) */}
             <div className="flex items-center gap-2">
+              {user?.uid !== item.ownerId && (
+                <button
+                  onClick={() => setShowReportSheet(true)}
+                  className="px-3 py-1.5 bg-stone-50 text-stone-400 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-amber-50 hover:text-amber-600 transition-colors flex items-center gap-1.5"
+                >
+                  <Flag size={12} />
+                  Report
+                </button>
+              )}
               {user?.uid === item.ownerId && (
                 <button 
                   onClick={async () => {
@@ -416,7 +434,7 @@ export function ItemDetailsSheet({ item, onClose, onViewProfile, focusComment = 
                       <span className="text-xs font-bold text-stone-600 group-hover/name:text-indigo-600 underline-offset-4 decoration-2">
                         <OwnerName ownerId={item.ownerId} initialName={item.ownerName} className="group-hover/name:underline" />
                       </span>
-                      <ConnectionBadge targetUserId={item.ownerId} className="ml-2" />
+                      <ConnectionBadge targetUserId={item.ownerId} degrees={item.degrees} className="ml-2" />
                     </button>
                     {item.createdAt && (
                       <div className="flex items-center gap-1.5 text-xs text-stone-400">
@@ -593,7 +611,7 @@ export function ItemDetailsSheet({ item, onClose, onViewProfile, focusComment = 
           </div>
 
           {/* Comment Input */}
-          <div className="flex-none p-4 pb-12 md:pb-6 border-t border-stone-100 bg-white">
+          <div className="flex-none p-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-6 border-t border-stone-100 bg-white">
             {replyTo && (
               <div className="flex items-center justify-between px-4 py-2 bg-indigo-50 rounded-t-xl border-x border-t border-indigo-100 -mb-px mx-auto max-w-2xl">
                 <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest">
@@ -650,6 +668,16 @@ export function ItemDetailsSheet({ item, onClose, onViewProfile, focusComment = 
               setShowGratitudeFlow(false);
               setGratitudeSent(true);
             }}
+          />
+        )}
+
+        {/* Report Content Sheet — App Store compliance */}
+        {showReportSheet && (
+          <ReportSheet
+            type="ITEM"
+            targetId={item.id}
+            targetName={item.title}
+            onClose={() => setShowReportSheet(false)}
           />
         )}
       </div>,

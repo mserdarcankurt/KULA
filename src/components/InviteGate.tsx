@@ -16,8 +16,9 @@ import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../hooks/useAuth';
 import { db } from '../lib/firebase';
-import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { KeyRound, ArrowRight, LogOut, Heart } from 'lucide-react';
+import { logEvent } from '../lib/analytics';
 
 export default function InviteGate() {
   const { user, profile, logout, updateProfile } = useAuth();
@@ -48,7 +49,9 @@ export default function InviteGate() {
     setError('');
     setResolvedHost(null);
 
-    if (code.trim().toUpperCase() === 'TESTER') {
+    const inviteCodeKey = code.trim().toLowerCase();
+
+    if (inviteCodeKey === 'tester') {
       setResolvedHost({
         uid: 'mock-host-uid',
         name: 'Alice Neighbor',
@@ -61,26 +64,31 @@ export default function InviteGate() {
     }
 
     try {
-      const q = query(
-        collection(db, 'users'),
-        where('inviteCode', '==', code.trim().toUpperCase())
-      );
-      const snap = await getDocs(q);
+      const inviteRef = doc(db, 'invites', inviteCodeKey);
+      const inviteSnap = await getDoc(inviteRef);
 
-      if (snap.empty) {
-        setError('No neighbor found with this code. Double-check and try again.');
+      if (!inviteSnap.exists()) {
+        setError('This invite code is invalid. Double-check and try again.');
         setLoading(false);
         return;
       }
 
-      const hostDoc = snap.docs[0];
-      if (hostDoc.id === user.uid) {
-        setError("That's your own code! Ask a neighbor for theirs.");
+      const inviteData = inviteSnap.data();
+      if (inviteData.status !== 'PENDING') {
+        setError('This invite code has already been used.');
         setLoading(false);
         return;
       }
 
-      const hostData = hostDoc.data();
+      const hostUid = inviteData.createdBy;
+      const hostSnap = await getDoc(doc(db, 'users', hostUid));
+      if (!hostSnap.exists()) {
+        setError('Neighbor host profile not found.');
+        setLoading(false);
+        return;
+      }
+
+      const hostData = hostSnap.data();
       const hostCreatedAt = hostData.createdAt?.toDate ? hostData.createdAt.toDate() : new Date();
       const joinedDateStr = hostCreatedAt.toLocaleDateString('en-US', {
         month: 'long',
@@ -89,9 +97,9 @@ export default function InviteGate() {
       const helpedCount = hostData.trustMosaic?.completedExchanges || 0;
 
       setResolvedHost({
-        uid: hostDoc.id,
-        name: hostData.displayName || 'A neighbor',
-        photo: hostData.photoURL || null,
+        uid: hostUid,
+        name: inviteData.createdByName || hostData.displayName || 'A neighbor',
+        photo: inviteData.createdByPhoto || hostData.photoURL || null,
         joinedDateStr,
         helpedCount,
       });
@@ -107,15 +115,34 @@ export default function InviteGate() {
    * PHASE 2: Confirm host and transition step to 'PHILOSOPHY'
    */
   const handleConfirm = async () => {
-    if (!resolvedHost || !user) return;
+    if (!resolvedHost || !user || !profile) return;
     setLoading(true);
 
     try {
-      await updateProfile({
+      const inviteCodeKey = code.trim().toLowerCase();
+      const batch = writeBatch(db);
+
+      // 1. For real invites, update the status of the invite code to USED
+      if (inviteCodeKey !== 'tester') {
+        const inviteRef = doc(db, 'invites', inviteCodeKey);
+        batch.update(inviteRef, {
+          status: 'USED',
+          usedBy: user.uid,
+          usedByName: profile.displayName || user.displayName || 'Anonymous User',
+          usedAt: serverTimestamp()
+        });
+      }
+
+      // 2. Set Bob's host and approve his onboarding status
+      const userRef = doc(db, 'users', user.uid);
+      batch.update(userRef, {
         hostId: resolvedHost.uid,
         hostStatus: 'APPROVED',
-        onboardingStep: 'PHILOSOPHY',
+        onboardingStep: 'PHILOSOPHY'
       });
+
+      await batch.commit();
+      logEvent('onboarding_step_reached', { step: 'PHILOSOPHY' });
     } catch (err) {
       console.error('Failed to accept invitation:', err);
       setError('Failed to connect. Please try again.');
@@ -176,46 +203,18 @@ export default function InviteGate() {
                 <p className="text-xs text-stone-400">Enter the 6-character code they gave you.</p>
               </div>
 
-              {/* Styled Tile Grid */}
-              <div className="relative flex justify-center gap-2 max-w-[320px] mx-auto cursor-text" onClick={handleTileClick}>
-                {/* Hidden Text Input */}
+              {/* Styled Thematic Code Input */}
+              <div className="max-w-[320px] mx-auto px-1">
                 <input
-                  ref={inputRef}
                   type="text"
-                  maxLength={6}
+                  placeholder="e.g. cozy-zucchini-42"
                   value={code}
                   onChange={(e) => {
-                    setCode(e.target.value.toUpperCase());
+                    setCode(e.target.value.toLowerCase());
                     setError('');
                   }}
-                  className="absolute inset-0 opacity-0 cursor-text w-full h-full z-10"
+                  className="w-full bg-white border-2 border-stone-200 rounded-2xl px-4 py-4 text-center text-base font-mono font-bold text-stone-800 focus:border-stone-900 outline-none shadow-sm transition-all placeholder:text-stone-300 placeholder:font-sans placeholder:text-xs"
                 />
-
-                {[...Array(6)].map((_, idx) => {
-                  const char = code[idx] || '';
-                  const isFocused = idx === code.length;
-                  return (
-                    <div
-                      key={idx}
-                      className={`w-12 h-14 bg-white border-2 rounded-xl flex items-center justify-center text-xl font-mono font-bold text-stone-800 shadow-sm transition-all ${
-                        isFocused
-                          ? 'border-stone-950 scale-105 shadow-md'
-                          : char
-                          ? 'border-stone-400'
-                          : 'border-stone-200'
-                      }`}
-                    >
-                      {char}
-                      {isFocused && (
-                        <motion.div
-                          animate={{ opacity: [0, 1, 0] }}
-                          transition={{ repeat: Infinity, duration: 1 }}
-                          className="w-0.5 h-6 bg-stone-900 absolute"
-                        />
-                      )}
-                    </div>
-                  );
-                })}
               </div>
 
               <div className="space-y-4">

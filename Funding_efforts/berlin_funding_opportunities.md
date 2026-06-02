@@ -12,11 +12,21 @@ KULA is a hyper-local mutual aid / gift economy platform — neighborhood-focuse
 | **What** | Monthly stipend of **€2,500/founder** for 6–12 months |
 | **Who** | Early-stage, research-driven, tech-based startups |
 | **Why KULA fits** | Recent batches specifically target **democratic resilience, social stability, and sustainability** — KULA's trust engine and community reciprocity model map perfectly |
+| **Current Status** | ⚠️ **Applications for the current batch are closed.** Keep an eye out for future calls, or explore the rolling options below. |
 | **How** | Managed through university incubators (Science & Startups, HWR Startup Incubator Berlin). **Book a consultation first** — this is required to get the application link |
 | **Links** | [science-startups.berlin](https://science-startups.berlin) · [startup-incubator.berlin](https://startup-incubator.berlin) |
 
 > [!TIP]
 > The BSS is the single best entry point. It gives you money to live on, mentorship, and access to university lab infrastructure — without giving up equity.
+
+### 1b. EXIST Business Start-up Grant (EXIST-Gründerstipendium)
+| | |
+|---|---|
+| **What** | Monthly stipend of **€1,000–€3,000/founder** for 12 months + €30,000 for materials + €10,000 coaching |
+| **Who** | Students, graduates, or researchers (up to 5 years post-grad) with a university-affiliated mentor |
+| **Why KULA fits** | Knowledge-based service/trust network engine. Social startups qualify if they have an innovative tech core |
+| **Current Status** | 🟢 **Open year-round (No deadlines).** Apply through your university's startup service (e.g. Science & Startups) |
+| **Links** | [exist.de](https://www.exist.de) |
 
 ---
 
@@ -28,6 +38,7 @@ KULA is a hyper-local mutual aid / gift economy platform — neighborhood-focuse
 | **Covers** | Rent, salaries, materials, marketing, prototyping costs |
 | **Why KULA fits** | Explicitly includes **social** and **digital** innovation. Community platform for neighborhood sharing is a direct hit |
 | **Requirement** | Company must be **registered in Berlin** |
+| **Current Status** | 🟢 **Open year-round (Rolling applications).** |
 | **Links** | [ibb-business-team.de](https://ibb-business-team.de) |
 
 > [!IMPORTANT]

@@ -17,6 +17,7 @@ import InviteGate from './InviteGate';
 import WaitingRoom from './WaitingRoom';
 import { SavedLocation } from '../types';
 import { generateRandomizedCenter } from '../lib/neighborhoodPrivacy';
+import { logEvent } from '../lib/analytics';
 
 // Animated Trust Web SVG Visualization
 function TrustWebAnimation() {
@@ -239,6 +240,7 @@ export default function Onboarding({ onComplete }: { onComplete: (action?: 'give
       await updateProfile({
         onboardingStep: nextStep as any
       });
+      logEvent('onboarding_step_reached', { step: nextStep });
       setStep(nextStep);
       setSubSlide(0);
     } catch (e) {
@@ -296,6 +298,7 @@ export default function Onboarding({ onComplete }: { onComplete: (action?: 'give
         neighborhoodRadius: radiusMeters,
         onboardingStep: 'FIRST_ACT'
       });
+      logEvent('onboarding_step_reached', { step: 'FIRST_ACT' });
       setStep('FIRST_ACT');
     } catch (e) {
       console.error('Error updating profile presence:', e);
@@ -322,6 +325,7 @@ export default function Onboarding({ onComplete }: { onComplete: (action?: 'give
         hasCompletedOnboarding: true,
         skippedFirstAct: action === 'explore'
       });
+      logEvent('onboarding_step_reached', { step: 'COMPLETE', action });
       onComplete(action);
     } catch (e) {
       console.error('Error completing onboarding:', e);

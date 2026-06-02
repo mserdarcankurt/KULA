@@ -23,6 +23,7 @@ import PublicProfile from './PublicProfile';
 import { OwnerAvatar } from './OwnerAvatar';
 import { OwnerName } from './OwnerName';
 import { formatDistanceToNow } from 'date-fns';
+import { logEvent } from '../lib/analytics';
 
 // Helper to compress images client-side before uploading to Firestore as base64 URLs
 const compressImage = (base64Str: string, maxWidth = 800, maxHeight = 800): Promise<string> => {
@@ -415,7 +416,7 @@ export default function Explore({
   const [detailItem, setDetailItem] = useState<Item | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
 
-  const { items: allItems, loading: loadingItems } = useItems(location, profile);
+  const { items: allItems, loading: loadingItems, loadMore, hasMore } = useItems(location, profile);
 
   useEffect(() => {
     if (profile?.joinedCircles && profile.joinedCircles.length > 0) {
@@ -512,6 +513,7 @@ export default function Explore({
     if (feedMode !== 'FLOW') return;
     if (visibleItemIds.size === 0) {
       setBuzzComments([]);
+      setLoadingBuzz(false);
       return;
     }
 
@@ -669,6 +671,17 @@ export default function Explore({
         createdAt: serverTimestamp(),
       });
 
+      logEvent('item_created', {
+        type: 'FLOW',
+        category: 'Community',
+        sharingMode: null,
+        has_images: !!mediaPreview,
+        has_videos: false,
+        visibility_reach: 'PUBLIC',
+        reach_types_count: 1,
+        circle_id: null
+      });
+
       setComposerContent('');
       setMediaFile(null);
       setMediaPreview(null);
@@ -706,130 +719,76 @@ export default function Explore({
           </h2>
         </div>
         
-        {/* Segment Switcher: Board vs. Flow */}
-        <div id="tour-explore-views" className="grid grid-cols-2 w-full sm:flex sm:w-auto bg-[#F3F1EB] p-1 rounded-2xl border border-stone-350 shadow-[inset_0_1.5px_3px_rgba(0,0,0,0.06)]">
-          {[
-            { id: 'BOARD', label: 'Board' },
-            { id: 'FLOW', label: 'Flow' }
-          ].map(({ id, label }) => {
-            const isActive = feedMode === id;
-            return (
-              <button
-                key={id}
-                onClick={() => setFeedMode(id as 'BOARD' | 'FLOW')}
-                className={`py-1.5 rounded-xl transition-all flex items-center justify-center gap-1.5 text-[9px] font-black uppercase tracking-wider relative ${
-                  isActive 
-                    ? 'bg-[#5B6B56] text-white shadow-sm font-black' 
-                    : 'text-stone-500 hover:text-stone-850'
-                } sm:px-4`}
-              >
-                <span>{label}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
+        {/* Switcher & Filter container */}
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          {/* Segment Switcher: Board vs. Hopescrolling */}
+          <div id="tour-explore-views" className="grid grid-cols-2 flex-1 sm:flex sm:w-auto bg-[#F3F1EB] p-1 rounded-2xl border border-stone-350 shadow-[inset_0_1.5px_3px_rgba(0,0,0,0.06)]">
+            {[
+              { id: 'BOARD', label: 'Board' },
+              { id: 'FLOW', label: 'Hopescrolling' }
+            ].map(({ id, label }) => {
+              const isActive = feedMode === id;
+              return (
+                <button
+                  key={id}
+                  onClick={() => setFeedMode(id as 'BOARD' | 'FLOW')}
+                  className={`py-1.5 rounded-xl transition-all flex items-center justify-center gap-1.5 text-[9px] font-black uppercase tracking-wider relative ${
+                    isActive 
+                      ? 'bg-[#5B6B56] text-white shadow-sm font-black' 
+                      : 'text-stone-500 hover:text-stone-850'
+                  } sm:px-4`}
+                >
+                  <span>{label}</span>
+                </button>
+              );
+            })}
+          </div>
 
-      {/* Filters row */}
-      <div className="px-6 py-2 bg-[#FDFBF9] border-b border-stone-200/60 flex items-center justify-between shrink-0 relative z-20">
-        <div className="flex items-center gap-2 flex-wrap min-w-0">
-          <select
-            value={selectedFilterScope}
-            onChange={(e) => setSelectedFilterScope(e.target.value)}
-            className="text-[10px] font-bold bg-[#F6F4EE] border border-stone-300 rounded-full px-3 py-1 text-stone-700 focus:outline-none focus:border-[#5B6B56] cursor-pointer shadow-sm"
-          >
-            <optgroup label="Connection Levels">
-              <option value="trust_6">Whole World (All)</option>
-              {TRUST_LEVELS.filter(l => l.value < 6).map(level => (
-                <option key={level.value} value={`trust_${level.value}`}>
-                  {`${level.short} (${level.label})`}
-                </option>
-              ))}
-            </optgroup>
-            {joinedCirclesList.length > 0 && (
-              <optgroup label="Your Circles">
-                {joinedCirclesList.map(circle => (
-                  <option key={circle.id} value={`circle_${circle.id}`}>
-                    {circle.name}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-          </select>
+          {/* Minimal Filters Button */}
+          <div className="relative">
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className={`p-2 rounded-2xl transition-all border shadow-sm flex items-center justify-center gap-1.5 relative ${
+                activeFilterCount > 0
+                  ? 'bg-[#5B6B56] text-white border-[#5B6B56] hover:bg-[#4E5D4A]'
+                  : 'bg-[#F6F4EE] text-stone-700 border-stone-350 hover:bg-[#EADFC9]'
+              }`}
+              title="Filters"
+            >
+              <Sliders size={16} className={activeFilterCount > 0 ? 'text-white' : 'text-stone-500'} />
+              {activeFilterCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#C86A51] text-white rounded-full flex items-center justify-center text-[8px] font-black border border-white">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
 
-          {/* Active filter chips */}
-          {trustFilter !== 6 && (
-            <span className="px-2.5 py-0.5 rounded-full bg-[#5B6B56]/10 text-[#5B6B56] text-[8px] font-bold uppercase flex items-center gap-1 border border-[#5B6B56]/20">
-              {TRUST_LEVELS.find(l => l.value === trustFilter)?.short}
-              <button onClick={() => setSelectedFilterScope('trust_6')} className="hover:text-[#C86A51] ml-0.5 font-bold">×</button>
-            </span>
-          )}
-          {circleFilter !== 'ALL' && (
-            <span className="px-2.5 py-0.5 rounded-full bg-[#5B6B56]/10 text-[#5B6B56] text-[8px] font-bold uppercase flex items-center gap-1 border border-[#5B6B56]/20">
-              {joinedCirclesList.find(c => c.id === circleFilter)?.name || 'Circle'}
-              <button onClick={() => setSelectedFilterScope('trust_6')} className="hover:text-[#C86A51] ml-0.5 font-bold">×</button>
-            </span>
-          )}
-          {typeFilter !== 'ALL' && (
-            <span className="px-2.5 py-0.5 rounded-full bg-[#5B6B56]/10 text-[#5B6B56] text-[8px] font-bold uppercase flex items-center gap-1 border border-[#5B6B56]/20">
-              {typeFilter}s
-              <button onClick={() => setTypeFilter('ALL')} className="hover:text-[#C86A51] ml-0.5 font-bold">×</button>
-            </span>
-          )}
-          {categoryFilter !== 'ALL' && (
-            <span className="px-2.5 py-0.5 rounded-full bg-[#5B6B56]/10 text-[#5B6B56] text-[8px] font-bold uppercase flex items-center gap-1 border border-[#5B6B56]/20">
-              {categoryFilter}
-              <button onClick={() => setCategoryFilter('ALL')} className="hover:text-[#C86A51] ml-0.5 font-bold">×</button>
-            </span>
-          )}
-        </div>
-
-        <div className="relative">
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            className={`px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider transition-all border shadow-sm flex items-center gap-1.5 ${
-              activeFilterCount > 0
-                ? 'bg-[#5B6B56] text-white border-[#5B6B56] hover:bg-[#4E5D4A]'
-                : 'bg-[#F6F4EE] text-stone-700 border-stone-350 hover:bg-[#EADFC9]'
-            }`}
-          >
-            <Sliders size={10} className={activeFilterCount > 0 ? 'text-white' : 'text-stone-500'} />
-            <span>Filters</span>
-            {activeFilterCount > 0 && (
-              <span className={`w-3.5 h-3.5 rounded-full flex items-center justify-center text-[8px] font-black ${
-                activeFilterCount > 0 ? 'bg-white text-[#5B6B56]' : 'bg-[#5B6B56] text-white'
-              }`}>
-                {activeFilterCount}
-              </span>
-            )}
-            <ChevronDown size={10} className={`transition-transform ${showFilters ? 'rotate-180' : ''}`} />
-          </button>
-
-          {/* Filters Popover */}
-          {showFilters && (
-            <>
-              <div 
-                className="fixed inset-0 z-40"
-                onClick={() => setShowFilters(false)}
-              />
-              <div className="absolute top-full right-0 mt-1 z-50">
-                <FilterPopover 
-                  selectedFilterScope={selectedFilterScope}
-                  setSelectedFilterScope={setSelectedFilterScope}
-                  joinedCirclesList={joinedCirclesList}
-                  typeFilter={typeFilter}
-                  setTypeFilter={setTypeFilter}
-                  categoryFilter={categoryFilter}
-                  setCategoryFilter={setCategoryFilter}
-                  onReset={() => {
-                    setSelectedFilterScope('trust_6');
-                    setTypeFilter('ALL');
-                    setCategoryFilter('ALL');
-                  }}
+            {/* Filters Popover */}
+            {showFilters && (
+              <>
+                <div 
+                  className="fixed inset-0 z-40"
+                  onClick={() => setShowFilters(false)}
                 />
-              </div>
-            </>
-          )}
+                <div className="absolute top-full right-0 mt-1 z-50">
+                  <FilterPopover 
+                    selectedFilterScope={selectedFilterScope}
+                    setSelectedFilterScope={setSelectedFilterScope}
+                    joinedCirclesList={joinedCirclesList}
+                    typeFilter={typeFilter}
+                    setTypeFilter={setTypeFilter}
+                    categoryFilter={categoryFilter}
+                    setCategoryFilter={setCategoryFilter}
+                    onReset={() => {
+                      setSelectedFilterScope('trust_6');
+                      setTypeFilter('ALL');
+                      setCategoryFilter('ALL');
+                    }}
+                  />
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1003,6 +962,17 @@ export default function Explore({
                           );
                         }
                       })}
+                      
+                      {hasMore && (
+                        <div className="flex justify-center py-4">
+                          <button
+                            onClick={loadMore}
+                            className="px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-600 rounded-full text-xs font-bold transition-colors"
+                          >
+                            Load More
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

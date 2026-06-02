@@ -26,12 +26,13 @@ import Header from './components/Header';
 import Navigation from './components/Navigation';
 import Welcome from './components/Welcome';
 import CommunityDrawer from './components/CommunityDrawer';
+import GlobalTraditionsLoader from './components/GlobalTraditionsLoader';
 const Onboarding = React.lazy(() => import('./components/Onboarding'));
 const TourGuide = React.lazy(() => import('./components/TourGuide'));
 const InviteGate = React.lazy(() => import('./components/InviteGate'));
 const WaitingRoom = React.lazy(() => import('./components/WaitingRoom'));
 import { db } from './lib/firebase';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, updateDoc, arrayUnion } from 'firebase/firestore';
 import { APIProvider } from '@vis.gl/react-google-maps';
 
 const API_KEY = (import.meta.env.VITE_GOOGLE_MAPS_PLATFORM_KEY as string) || '';
@@ -43,14 +44,36 @@ const API_KEY = (import.meta.env.VITE_GOOGLE_MAPS_PLATFORM_KEY as string) || '';
  */
 function AppContent() {
   // Pull data from our sensors (hooks)
-  const { user, profile, loading: authLoading, isGuardian } = useAuth();
-  const { location } = useGeolocation();
+  const { user, profile, loading: authLoading } = useAuth();
+  const { location } = useGeolocation(!!user);
   
   // Local state for navigation
   const [activeTab, setActiveTab] = useState('home');
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [selectedCircleId, setSelectedCircleId] = useState<string | null>(null);
   const [showCommunityDrawer, setShowCommunityDrawer] = useState(false);
+
+  // App-open intro animation overlay states
+  const [introCompleted, setIntroCompleted] = useState(false);
+  const [canContinueIntro, setCanContinueIntro] = useState(false);
+
+  useEffect(() => {
+    if (user && profile) {
+      if (profile.skipIntroAnimation) {
+        setIntroCompleted(true);
+      } else {
+        setIntroCompleted(false);
+        setCanContinueIntro(false);
+        const timer = setTimeout(() => {
+          setCanContinueIntro(true);
+        }, 2500);
+        return () => clearTimeout(timer);
+      }
+    } else {
+      setIntroCompleted(false);
+      setCanContinueIntro(false);
+    }
+  }, [user, profile?.uid, profile?.skipIntroAnimation]);
 
   const handleNavigateToCircle = (circleId: string) => {
     setSelectedCircleId(circleId);
@@ -106,12 +129,22 @@ function AppContent() {
 
   // Request browser notification permissions once authenticated
   useEffect(() => {
-    if (user) {
+    if (user && profile) {
       import('./lib/pushService').then(({ requestNotificationPermission }) => {
-        requestNotificationPermission();
+        requestNotificationPermission().then(token => {
+          if (token && user.uid && !user.isAnonymous) {
+            // Only update if it's not already in the array to avoid unnecessary writes, 
+            // though arrayUnion handles duplicates gracefully on the backend.
+            if (!profile.fcmTokens?.includes(token)) {
+              updateDoc(doc(db, 'users', user.uid), {
+                fcmTokens: arrayUnion(token)
+              }).catch(err => console.error("Failed to save FCM token:", err));
+            }
+          }
+        });
       });
     }
-  }, [user]);
+  }, [user, profile?.uid, profile?.fcmTokens]);
 
   /**
    * LOADING STATE:
@@ -143,8 +176,7 @@ function AppContent() {
     );
   }
 
-  // GATE 1: If not logged in (and not in dev guardian mode), show the Welcome/Login screen.
-  if (!user && !isGuardian) {
+  if (!user) {
     return <Welcome />;
   }
 
@@ -234,6 +266,24 @@ function AppContent() {
         return <Explore location={location} />;
     }
   };
+
+  const showIntroOverlay = user && profile && isOnboardingComplete && !profile.skipIntroAnimation && !introCompleted;
+
+  if (showIntroOverlay) {
+    return (
+      <div className="flex flex-col h-[100dvh] max-w-md mx-auto bg-[#FAF7F0] items-center justify-center p-6 relative overflow-hidden">
+        <GlobalTraditionsLoader showLearnMore={true} />
+        <div className={`transition-all duration-500 mt-4 ${canContinueIntro ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
+          <button 
+            onClick={() => setIntroCompleted(true)} 
+            className="px-6 py-3 bg-[#5B6B56] hover:bg-[#4E5D4A] text-white text-xs font-black uppercase tracking-wider rounded-2xl active:scale-[0.98] transition-all shadow-md cursor-pointer animate-bounce"
+          >
+            Your neighborhood is ready ✨
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   /**
    * MAIN LAYOUT:

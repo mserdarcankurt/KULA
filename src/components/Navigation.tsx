@@ -70,8 +70,9 @@ export default function Navigation({
   }
 
   return (
-    // sticky bottom-0 z-50 keeps this bar fixed at the bottom above all content
-    <nav className="h-16 pb-safe bg-white border-t border-stone-100 flex items-center justify-around px-2 sticky bottom-0 z-55 shadow-[0_-2px_10px_rgba(0,0,0,0.02)]">
+    // We replace h-16 and pb-safe with pt-3 and calc-based safe area padding to prevent
+    // tab content from being squished on iOS devices with home indicators.
+    <nav className="pt-3 pb-[calc(10px+env(safe-area-inset-bottom))] bg-white border-t border-stone-100 flex items-center justify-around px-2 sticky bottom-0 z-55 shadow-[0_-2px_10px_rgba(0,0,0,0.02)]">
       {tabs.map((tab) => {
         // Community is active when the drawer is open.
         // Other tabs are active when activeTab matches and the drawer is closed.

@@ -38,13 +38,15 @@ interface ConnectionBadgeProps {
   targetUserId: string;
   className?: string;
   showLineage?: boolean;
+  degrees?: number;
 }
 
-export default function ConnectionBadge({ targetUserId, className = "", showLineage = false }: ConnectionBadgeProps) {
+export default function ConnectionBadge({ targetUserId, className = "", showLineage = false, degrees }: ConnectionBadgeProps) {
   const { user } = useAuth();
   const [data, setData] = useState<{ degrees: number | null; via?: string; fullChain?: string[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [showTooltip, setShowTooltip] = useState(false);
+  const [lazyLoadingPath, setLazyLoadingPath] = useState(false);
 
   useEffect(() => {
     if (!user || !targetUserId || user.uid === targetUserId) {
@@ -52,8 +54,15 @@ export default function ConnectionBadge({ targetUserId, className = "", showLine
       return;
     }
 
+    if (degrees !== undefined && !showLineage) {
+      setData({ degrees });
+      setLoading(false);
+      return;
+    }
+
     async function calculate() {
       try {
+        setLoading(true);
         const result = await getDegreesOfSeparation(user!.uid, targetUserId);
         if (result.degrees !== null) {
           // Find the "via" person (the first step in the chain from the current user)
@@ -70,7 +79,31 @@ export default function ConnectionBadge({ targetUserId, className = "", showLine
     }
 
     calculate();
-  }, [user?.uid, targetUserId]);
+  }, [user?.uid, targetUserId, degrees, showLineage]);
+
+  const handleTooltipToggle = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const nextShow = !showTooltip;
+    setShowTooltip(nextShow);
+
+    // If opening the tooltip and we don't have detailed via info yet,
+    // and it's a distant connection (degrees > 1), fetch it lazily.
+    if (nextShow && user && targetUserId && data && data.degrees !== null && data.degrees > 1 && !data.via && !lazyLoadingPath) {
+      setLazyLoadingPath(true);
+      try {
+        const result = await getDegreesOfSeparation(user.uid, targetUserId);
+        if (result.degrees !== null) {
+          const via = result.chain.length > 2 ? result.chain[1].name : undefined;
+          const fullChain = result.chain.map(node => node.name);
+          setData({ degrees: result.degrees, via, fullChain });
+        }
+      } catch (err) {
+        console.error('Failed to calculate connection lazily:', err);
+      } finally {
+        setLazyLoadingPath(false);
+      }
+    }
+  };
 
   if (loading || !data || data.degrees === null) return null;
 
@@ -88,6 +121,9 @@ export default function ConnectionBadge({ targetUserId, className = "", showLine
     if (data.degrees === 1) {
       return "Direct connection. You either invited them, they invited you, or you have vouched for each other.";
     }
+    if (lazyLoadingPath) {
+      return "Loading connection details...";
+    }
     if (data.degrees === 2 && data.via) {
       return `Friend of a friend. You are connected to them through ${data.via.split(' ')[0]}.`;
     }
@@ -100,10 +136,7 @@ export default function ConnectionBadge({ targetUserId, className = "", showLine
   return (
     <div className={`inline-flex flex-col items-center gap-2 ${className}`}>
       <div 
-        onClick={(e) => {
-          e.stopPropagation();
-          setShowTooltip(!showTooltip);
-        }}
+        onClick={handleTooltipToggle}
         className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full ${style.bg} ${style.color} border ${style.border} cursor-pointer hover:opacity-90 transition-all relative`}
       >
         <span className="font-mono text-[8px] tracking-tight font-bold">{style.dots}</span>

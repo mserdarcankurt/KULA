@@ -6,14 +6,14 @@ test.describe('KULA Neighborhood Guardian - Advanced Patrol', () => {
     page.on('console', msg => console.log(`PAGE LOG [${msg.type()}]:`, msg.text()));
     page.on('pageerror', err => console.error('PAGE ERROR:', err.message));
 
-    // Navigate and enable Guardian Mode
+    // Navigate and run test login helper
     await page.goto('/');
     
-    // Wait for the window function to be available
-    await page.waitForFunction(() => typeof (window as any).enableGuardianMode === 'function');
+    // Wait for the test login helper to be available and run it
+    await page.waitForFunction(() => typeof (window as any).__runTestLogin === 'function');
     
-    await page.evaluate(() => {
-      (window as any).enableGuardianMode();
+    await page.evaluate(async () => {
+      await (window as any).__runTestLogin();
     });
     
     // Ensure "Your Neighborhood" header is visible (landing page is Explore)
@@ -64,7 +64,7 @@ test.describe('KULA Neighborhood Guardian - Advanced Patrol', () => {
     // Verify Profile and Trust Mosaic elements are detailed and correctly rendered
     await expect(page.getByText('Copy "Link In Bio"')).toBeVisible();
     await expect(page.getByText('My Network')).toBeVisible();
-    await expect(page.getByText('My Invite Code')).toBeVisible();
+    await expect(page.getByText('Invite Neighbors')).toBeVisible();
     
     // Capture Visual Baseline (for manual review in Playwright report)
     await page.screenshot({ path: 'e2e/screenshots/profile-page.png' });
@@ -102,8 +102,8 @@ test.describe('KULA Neighborhood Guardian - Advanced Patrol', () => {
   });
 
   test('Detail: Flow Tab Feed Sub-Filtering', async ({ page }) => {
-    // 1. Switch to Flow mode
-    const flowTabButton = page.locator('#tour-explore-views button:has-text("Flow")');
+    // 1. Switch to Hopescrolling mode
+    const flowTabButton = page.locator('#tour-explore-views button:has-text("Hopescrolling")');
     await expect(flowTabButton).toBeVisible();
     await flowTabButton.click();
 

@@ -7,8 +7,8 @@
  * "vibe" of the app from one single file.
  */
 export const ART_DIRECTION = {
-  theme: "Berlin Community, Analog, Warm, Grassroots",
-  description: "Aesthetic focusing on local community, sharing, natural light, and neighborhood connectedness.",
+  theme: "Global Mutual Aid, Gift Economies, Warm, Grassroots",
+  description: "Aesthetic inspired by ancient traditions of unconditional reciprocity (İmece, Xenia, Ayni, Kula, Ubuntu) combined with tactile, natural tones and human connectedness.",
   
   /**
    * FALLBACKS: Preventing the "Empty State" look.
@@ -82,11 +82,11 @@ export const ART_DIRECTION = {
   /**
    * AI PROMPT GUIDELINES:
    * When we ask an AI to generate images for us, we append these rules 
-   * to ensure the generated images match our "Berlin Analog" style.
+   * to ensure the generated images match our style.
    */
   promptGuidelines: `
-    Style: Analog photography, warm tones, natural lighting, 35mm film aesthetic, candid, authentic, grass-roots, community-focused.
-    Subject Matter: Diverse people, neighborhood streets (Berlin style), altbaus, bicycles, urban gardens, thrift store finds, DIY workshops.
+    Style: Analog photography, organic textures (clay, textiles, wood), warm natural golden hour lighting, 35mm film aesthetic, candid, authentic, grass-roots, community-focused.
+    Subject Matter: Diverse people, neighborhood streets (Berlin Altbau), communal gardens, group labor, shared meals, traditional pottery, hand-weaving, bicycle fixing.
     Avoid: Corporate stock photo vibes, over-polished 3D renders, cold lighting, studio setups.
   `
 };

@@ -51,6 +51,7 @@ import ConnectionBadge from './ConnectionBadge';
 import { OwnerAvatar } from './OwnerAvatar';
 import BridgeSheet from './BridgeSheet';
 import { AnimatePresence } from 'motion/react';
+import GlobalTraditionsLoader from './GlobalTraditionsLoader';
 
 interface FeedProps {
   location: { lat: number; lng: number } | null;
@@ -74,7 +75,7 @@ export default function Feed({
   onNavigateToTab
 }: FeedProps) {
   const { user, profile } = useAuth();
-  const { items, loading } = useItems(location, profile, circleId);
+  const { items, loading, loadMore, hasMore } = useItems(location, profile, circleId);
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   const [detailItem, setDetailItem] = useState<Item | null>(null);
   const [shouldFocusComment, setShouldFocusComment] = useState(false);
@@ -282,11 +283,7 @@ export default function Feed({
         )}
 
         {loading ? (
-          <div className="space-y-4">
-            {[1, 2, 3].map(i => (
-              <div key={i} className="h-32 bg-stone-100 animate-pulse rounded-3xl" />
-            ))}
-          </div>
+          <GlobalTraditionsLoader />
         ) : filteredItems.length > 0 ? (
           filteredItems.map(item => (
             <div key={item.id}>
@@ -310,6 +307,17 @@ export default function Feed({
         ) : (
           <div className="text-center py-20 space-y-4">
             <p className="text-stone-400 italic font-serif">No items in the feed yet.</p>
+          </div>
+        )}
+
+        {hasMore && filteredItems.length > 0 && (
+          <div className="flex justify-center py-4">
+            <button
+              onClick={loadMore}
+              className="px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-600 rounded-full text-xs font-bold transition-colors"
+            >
+              Load More
+            </button>
           </div>
         )}
       </div>
@@ -636,7 +644,7 @@ export function ItemCard({ item, circle, onNavigateToChat, onViewProfile, onClic
                 </span>
               </div>
             )}
-            <ConnectionBadge targetUserId={item.ownerId} className="!mt-0" />
+            <ConnectionBadge targetUserId={item.ownerId} degrees={item.degrees} className="!mt-0" />
           </div>
         </div>
       </div>

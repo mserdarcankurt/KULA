@@ -10,6 +10,8 @@ import { db } from '../lib/firebase';
 import { collection, addDoc, serverTimestamp, query, where, onSnapshot, getDoc, doc, updateDoc } from 'firebase/firestore';
 import { useAuth } from '../hooks/useAuth';
 import { Item } from '../types';
+import { isNative } from '../lib/platform';
+import { Share } from '@capacitor/share';
 
 interface BridgeSheetProps {
   item: Item;
@@ -193,23 +195,47 @@ export default function BridgeSheet({ item, onClose, onBridged }: BridgeSheetPro
   };
 
   const handleExternalShare = async () => {
-    const shareData = {
-      title: item.title,
-      text: `Check out this ${item.type.toLowerCase()} on KULA: ${item.title}\n\n"${item.description}"`,
-      url: window.location.origin + `/discovery?item=${item.id}`
-    };
+    const shareText = `Check out this ${item.type.toLowerCase()} on KULA: ${item.title}\n\n"${item.description}"`;
+    const shareUrl = window.location.origin + `/discovery?item=${item.id}`;
 
-    if (navigator.share) {
+    if (isNative()) {
+      /**
+       * NATIVE PATH (iOS / Android):
+       * Uses @capacitor/share which opens the native iOS Share Sheet.
+       * This gives users access to AirDrop, iMessage, WhatsApp, Instagram,
+       * and every other app that supports the iOS share extension system.
+       */
       try {
-        await navigator.share(shareData);
+        await Share.share({
+          title: item.title,
+          text: shareText,
+          url: shareUrl,
+          dialogTitle: 'Share this with a neighbor',
+        });
+      } catch (err) {
+        // User cancelled the share sheet — this is normal, not an error
+        if ((err as Error).message !== 'Share cancelled') {
+          console.error('Native share failed', err);
+        }
+      }
+    } else if (navigator.share) {
+      /**
+       * WEB PATH (Modern browsers with Web Share API):
+       */
+      try {
+        await navigator.share({ title: item.title, text: shareText, url: shareUrl });
       } catch (err) {
         if ((err as Error).name !== 'AbortError') {
           console.error('Share failed', err);
         }
       }
     } else {
+      /**
+       * FALLBACK (Older browsers without Web Share API):
+       * Copies the share text + URL to the clipboard.
+       */
       try {
-        await navigator.clipboard.writeText(`${shareData.text}\n${shareData.url}`);
+        await navigator.clipboard.writeText(`${shareText}\n${shareUrl}`);
         alert('Link copied to clipboard!');
       } catch (err) {
         console.error('Copy failed', err);

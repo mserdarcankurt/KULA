@@ -59,6 +59,7 @@ import { OwnerName } from './OwnerName';
 import { ItemDetailsSheet } from './ItemDetailsSheet';
 import ConnectionBadge from './ConnectionBadge';
 import BridgeSheet from './BridgeSheet';
+import GlobalTraditionsLoader from './GlobalTraditionsLoader';
 
 interface DiscoveryProps {
   location: { lat: number; lng: number } | null;
@@ -69,7 +70,7 @@ interface DiscoveryProps {
 
 export default function Discovery({ location, circleId, onNavigateToChat, onNavigateToCircle }: DiscoveryProps) {
   const { user, profile } = useAuth();
-  const { items, loading } = useItems(location, profile, circleId);
+  const { items, loading, loadMore, hasMore } = useItems(location, profile, circleId);
   const [localSwipedIds, setLocalSwipedIds] = useState<Set<string>>(new Set());
   const [swipedIds, setSwipedIds] = useState<Set<string>>(new Set());
   const [isLocalOnly, setIsLocalOnly] = useState(() => {
@@ -429,7 +430,7 @@ export default function Discovery({ location, circleId, onNavigateToChat, onNavi
 
   if (loading) return (
     <div className="h-full flex items-center justify-center">
-      <div className="animate-pulse text-stone-300 font-serif text-xl italic">Curating your circle...</div>
+      <GlobalTraditionsLoader />
     </div>
   );
 
@@ -619,6 +620,14 @@ export default function Discovery({ location, circleId, onNavigateToChat, onNavi
                 <h2 className="serif text-2xl font-bold text-stone-800">No more items matching filters</h2>
                 <p className="text-stone-500 italic text-sm">Check back later or try different categories!</p>
                 <div className="flex flex-col gap-3 pt-4">
+                  {hasMore && (
+                    <button 
+                      onClick={loadMore}
+                      className="bg-[#5B6B56] text-white px-8 py-3 rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg hover:bg-[#4E5D4A] transition-all"
+                    >
+                      Load More
+                    </button>
+                  )}
                   <button 
                     onClick={() => {
                       setScope('ALL');
@@ -826,7 +835,7 @@ export function SwipeCard({ item, onSwipe, onViewProfile, isLocalOnly }: SwipeCa
                   </span>
                 </button>
               )}
-              <ConnectionBadge targetUserId={item.ownerId} className="mt-1" />
+              <ConnectionBadge targetUserId={item.ownerId} degrees={item.degrees} className="mt-1" />
             </div>
           </div>
           

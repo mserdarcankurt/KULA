@@ -968,32 +968,32 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
             <h2 className="serif text-4xl font-bold text-stone-900 leading-tight">Circles</h2>
             <p className="text-[10px] uppercase font-black tracking-widest text-brand mt-1.5 px-0.5">Intentional communities</p>
           </div>
-          <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <button 
               onClick={() => { setShowFilters(!showFilters); setShowCreate(false); setShowJoinCode(false); }}
-              className={`p-3.5 sm:p-4 rounded-2xl transition-all shadow-xl border flex-shrink-0 ${
+              className={`p-3.5 rounded-2xl transition-all shadow-xl border flex-shrink-0 ${
                 showFilters ? 'bg-stone-900 border-stone-900 text-white' : 'bg-white border-stone-100 text-stone-400 hover:text-stone-900'
               }`}
               title="Search and Filter"
             >
-              <Layers size={20} className="sm:w-[22px] sm:h-[22px]" />
+              <Layers size={20} />
             </button>
             <button 
               onClick={() => { setShowJoinCode(!showJoinCode); setShowCreate(false); setShowFilters(false); }}
-              className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-8 py-3.5 sm:py-4 rounded-2xl shadow-xl transform active:scale-95 transition-all font-black uppercase text-[9px] sm:text-[11px] tracking-[0.1em] sm:tracking-[0.15em] border flex-shrink-0 ${
+              className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 sm:px-4 py-3.5 rounded-2xl shadow-xl transform active:scale-95 transition-all font-black uppercase text-[9px] sm:text-[10px] tracking-[0.1em] border flex-shrink-0 ${
                 showJoinCode ? 'bg-stone-100 text-stone-500 border-stone-100' : 'bg-white text-stone-900 border-stone-200'
               }`}
             >
-              {showJoinCode ? <X size={16} className="sm:w-[18px] sm:h-[18px]" /> : <Hash size={16} className="sm:w-[18px] sm:h-[18px]" />}
+              {showJoinCode ? <X size={16} /> : <Hash size={16} />}
               <span>{showJoinCode ? 'Dismiss' : 'Join'}</span>
             </button>
             <button 
               onClick={() => { setShowCreate(!showCreate); setShowJoinCode(false); setShowFilters(false); }}
-              className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-8 py-3.5 sm:py-4 rounded-2xl shadow-xl transform active:scale-95 transition-all font-black uppercase text-[9px] sm:text-[11px] tracking-[0.1em] sm:tracking-[0.15em] flex-shrink-0 ${
+              className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 sm:px-4 py-3.5 rounded-2xl shadow-xl transform active:scale-95 transition-all font-black uppercase text-[9px] sm:text-[10px] tracking-[0.1em] flex-shrink-0 ${
                 showCreate ? 'bg-stone-100 text-stone-500' : 'bg-stone-900 text-white hover:bg-black'
               }`}
             >
-              {showCreate ? <X size={16} className="sm:w-[18px] sm:h-[18px]" /> : <Plus size={16} className="sm:w-[18px] sm:h-[18px]" />}
+              {showCreate ? <X size={16} /> : <Plus size={16} />}
               <span>{showCreate ? 'Dismiss' : 'Start'}</span>
             </button>
           </div>

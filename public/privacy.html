@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Privacy Policy — KULA</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Inter', sans-serif; background: #FDFBF4; color: #44403c; line-height: 1.8; }
+    .container { max-width: 680px; margin: 0 auto; padding: 3rem 1.5rem 6rem; }
+    h1 { font-size: 2rem; font-weight: 700; color: #1c1917; margin-bottom: 0.5rem; }
+    .subtitle { font-size: 0.85rem; color: #a8a29e; margin-bottom: 2.5rem; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600; }
+    h2 { font-size: 1.15rem; font-weight: 700; color: #292524; margin-top: 2rem; margin-bottom: 0.75rem; }
+    h3 { font-size: 1rem; font-weight: 600; color: #44403c; margin-top: 1rem; margin-bottom: 0.5rem; }
+    p, li { font-size: 0.95rem; margin-bottom: 0.75rem; }
+    ul { padding-left: 1.5rem; margin-bottom: 1rem; }
+    li { margin-bottom: 0.4rem; }
+    a { color: #5B6B56; }
+    .brand { display: inline-block; background: #5B6B56; color: white; padding: 0.15rem 0.5rem; border-radius: 0.4rem; font-weight: 700; font-size: 0.85rem; }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 0.75rem; border-bottom: 1px solid #e7e5e4; }
+    th { font-weight: 700; color: #292524; background: #faf8f2; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Privacy Policy</h1>
+    <p class="subtitle"><span class="brand">KULA</span> &nbsp;· Last updated: May 30, 2026</p>
+
+    <h2>1. Introduction</h2>
+    <p>KULA ("we", "our", "the App") respects your privacy. This Privacy Policy explains what data we collect, how we use it, and your rights regarding your personal information.</p>
+    <p>By using KULA, you consent to the data practices described in this policy.</p>
+
+    <h2>2. Data We Collect</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Data Type</th>
+          <th>Purpose</th>
+          <th>Stored Where</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Name & profile photo</td>
+          <td>Display to other neighbors</td>
+          <td>Firebase Firestore</td>
+        </tr>
+        <tr>
+          <td>Email address</td>
+          <td>Authentication only</td>
+          <td>Firebase Auth</td>
+        </tr>
+        <tr>
+          <td>Approximate location</td>
+          <td>Show nearby items & neighbors</td>
+          <td>Firebase Firestore (privacy-offset applied)</td>
+        </tr>
+        <tr>
+          <td>Posts & messages</td>
+          <td>Core app functionality</td>
+          <td>Firebase Firestore</td>
+        </tr>
+        <tr>
+          <td>Device push token</td>
+          <td>Send notifications</td>
+          <td>Firebase Firestore</td>
+        </tr>
+        <tr>
+          <td>Photos (uploaded)</td>
+          <td>Attach to posts</td>
+          <td>Firebase Storage</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Location Privacy</h3>
+    <p>KULA applies a <strong>privacy offset</strong> to your location. Your exact home address is never stored or shared. Instead, we generate a randomized center point within your chosen privacy radius (configurable from 500m to 5km). Other users only see this approximate neighborhood, never your real coordinates.</p>
+
+    <h2>3. How We Use Your Data</h2>
+    <ul>
+      <li><strong>To operate the service:</strong> Display your profile, posts, and messages to other neighbors.</li>
+      <li><strong>To enable discovery:</strong> Show you items and neighbors near your approximate location.</li>
+      <li><strong>To send notifications:</strong> Alert you about messages, matches, and community activity.</li>
+      <li><strong>To improve the service:</strong> Understand usage patterns and fix bugs.</li>
+      <li><strong>To ensure safety:</strong> Review reports and enforce community guidelines.</li>
+    </ul>
+
+    <h2>4. Data We Do NOT Collect</h2>
+    <ul>
+      <li>We do not sell your data to third parties.</li>
+      <li>We do not use your data for advertising.</li>
+      <li>We do not track you across other apps or websites.</li>
+      <li>We do not store your exact home address (privacy offset is always applied).</li>
+    </ul>
+
+    <h2>5. Third-Party Services</h2>
+    <p>KULA uses the following third-party services:</p>
+    <ul>
+      <li><strong>Firebase (Google)</strong> — Authentication, database, storage, and hosting. See <a href="https://firebase.google.com/support/privacy" target="_blank">Firebase Privacy Policy</a>.</li>
+      <li><strong>Google Maps Platform</strong> — Map display and address search. See <a href="https://policies.google.com/privacy" target="_blank">Google Privacy Policy</a>.</li>
+      <li><strong>Apple Push Notification Service (APNs)</strong> — Push notifications on iOS devices.</li>
+    </ul>
+
+    <h2>6. Data Retention</h2>
+    <ul>
+      <li>Your data is retained as long as your account is active.</li>
+      <li>When you delete your account, your profile data is anonymized immediately (name, bio, and photo are wiped).</li>
+      <li>Posts and messages may be retained in anonymized form for community integrity.</li>
+      <li>Reports are retained for moderation purposes.</li>
+    </ul>
+
+    <h2>7. Your Rights</h2>
+    <p>You have the right to:</p>
+    <ul>
+      <li><strong>Access:</strong> View all data associated with your account in the Profile section.</li>
+      <li><strong>Correct:</strong> Update your profile information at any time.</li>
+      <li><strong>Delete:</strong> Delete your account from the Profile settings (bottom of the page).</li>
+      <li><strong>Portability:</strong> Request a copy of your data by contacting us.</li>
+      <li><strong>Object:</strong> Opt out of non-essential notifications in your device settings.</li>
+    </ul>
+
+    <h2>8. Children's Privacy</h2>
+    <p>KULA is not intended for children under 13. We do not knowingly collect personal information from children under 13. If you believe a child under 13 is using KULA, please contact us and we will promptly delete their account.</p>
+
+    <h2>9. Security</h2>
+    <p>We use industry-standard security measures including:</p>
+    <ul>
+      <li>Encrypted data transmission (HTTPS/TLS)</li>
+      <li>Firebase Security Rules enforcing server-side access control</li>
+      <li>Privacy-offset location to protect home addresses</li>
+      <li>No plaintext storage of sensitive information</li>
+    </ul>
+
+    <h2>10. Changes to This Policy</h2>
+    <p>We may update this Privacy Policy from time to time. If we make significant changes, we will notify you through the App. The "Last updated" date at the top reflects the most recent revision.</p>
+
+    <h2>11. Contact Us</h2>
+    <p>For privacy-related questions or data requests, please contact:</p>
+    <p><a href="mailto:privacy@kula-app.com">privacy@kula-app.com</a></p>
+  </div>
+</body>
+</html>
