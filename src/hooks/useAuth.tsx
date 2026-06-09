@@ -24,9 +24,9 @@ import { logEvent } from '../lib/analytics';
  * TODO [POST-ALPHA]: Move this to a Firestore 'admins' collection or
  * Firebase custom claims so it's not hardcoded in the client.
  */
-const FOUNDER_UIDS = [
-  'PNS6UdUMDXb2y37tsPhhaxHBpEM2', // srdrcnkurt@gmail.com — Serdar Kurt (founder)
-];
+const FOUNDER_UIDS = import.meta.env.VITE_FOUNDER_UIDS 
+  ? import.meta.env.VITE_FOUNDER_UIDS.split(',') 
+  : [];
 
 /**
  * AuthContextType:

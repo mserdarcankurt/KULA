@@ -10,7 +10,7 @@
  *   - Clean warm neutral stone-50 page.
  *   - Tile-grid code entry (6 characters).
  *   - "The Handshake" reveal card displaying host's profile details.
- *   - Alpha automatic approval thank-you note.
+ *   - Welcoming invitation verification note.
  */
 import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -283,11 +283,11 @@ export default function InviteGate() {
                 </div>
               </div>
 
-              {/* Alpha auto-approved info box */}
-              <div className="bg-amber-50 border border-amber-200/60 rounded-2xl p-4 text-left max-w-sm mx-auto">
-                <h4 className="text-xs font-bold text-amber-800 uppercase tracking-wider mb-1">Alpha Tester Auto-Approval</h4>
-                <p className="text-xs text-amber-700 leading-relaxed">
-                  Thank you for taking part in the KULA alpha test! For this stage, you are approved immediately so you can start exploring.
+              {/* Invitation Ready info box */}
+              <div className="bg-stone-100 border border-stone-200 rounded-2xl p-4 text-left max-w-sm mx-auto shadow-sm">
+                <h4 className="text-xs font-bold text-[#5A5A40] uppercase tracking-wider mb-1">Invitation Ready</h4>
+                <p className="text-xs text-stone-600 leading-relaxed">
+                  Welcome! Your invitation has been verified. Once you accept, you will enter KULA—our shared neighborhood circle built on trust and mutual support.
                 </p>
               </div>
 

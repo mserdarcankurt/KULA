@@ -27,7 +27,7 @@
 <body>
   <div class="container">
     <h1>Privacy Policy</h1>
-    <p class="subtitle"><span class="brand">KULA</span> &nbsp;· Last updated: May 30, 2026</p>
+    <p class="subtitle"><span class="brand">KULA</span> &nbsp;· Last updated: June 5, 2026</p>
 
     <h2>1. Introduction</h2>
     <p>KULA ("we", "our", "the App") respects your privacy. This Privacy Policy explains what data we collect, how we use it, and your rights regarding your personal information.</p>
@@ -55,9 +55,14 @@
           <td>Firebase Auth</td>
         </tr>
         <tr>
-          <td>Approximate location</td>
-          <td>Show nearby items & neighbors</td>
-          <td>Firebase Firestore (privacy-offset applied)</td>
+          <td>Exact location coordinates</td>
+          <td>Private distance computations</td>
+          <td>Firebase Firestore (restricted <code>users_private</code>)</td>
+        </tr>
+        <tr>
+          <td>Approximate location bubble</td>
+          <td>Show nearby items & neighbors publicly</td>
+          <td>Firebase Firestore (public profile)</td>
         </tr>
         <tr>
           <td>Posts & messages</td>
@@ -74,11 +79,21 @@
           <td>Attach to posts</td>
           <td>Firebase Storage</td>
         </tr>
+        <tr>
+          <td>Usage analytics</td>
+          <td>Improve app performance and experience</td>
+          <td>Firebase Analytics</td>
+        </tr>
+        <tr>
+          <td>Translation text inputs</td>
+          <td>Translate posts to other languages on request</td>
+          <td>Google Gemini API (processed transitively, no PII sent)</td>
+        </tr>
       </tbody>
     </table>
 
     <h3>Location Privacy</h3>
-    <p>KULA applies a <strong>privacy offset</strong> to your location. Your exact home address is never stored or shared. Instead, we generate a randomized center point within your chosen privacy radius (configurable from 500m to 5km). Other users only see this approximate neighborhood, never your real coordinates.</p>
+    <p>KULA is built on trust and privacy. When you set your home location, we save your exact coordinates in a highly secure, restricted private collection (<code>users_private/{userId}</code>) accessible only by our internal database services. These coordinates are used solely to compute distance calculations when sorting listings. For the public network, KULA applies a <strong>privacy offset</strong>: we generate a randomized center point within your chosen privacy radius (configurable from 500m to 5km). Other users only see this approximate neighborhood bubble, and your real coordinates are never exposed or shared publicly.</p>
 
     <h2>3. How We Use Your Data</h2>
     <ul>
@@ -94,13 +109,14 @@
       <li>We do not sell your data to third parties.</li>
       <li>We do not use your data for advertising.</li>
       <li>We do not track you across other apps or websites.</li>
-      <li>We do not store your exact home address (privacy offset is always applied).</li>
+      <li>We do not share your exact location coordinates. While stored securely in a private database collection (<code>users_private</code>) strictly for calculating distance sorting relative to other items, your exact location is never exposed to other users or shared with external parties.</li>
     </ul>
 
     <h2>5. Third-Party Services</h2>
     <p>KULA uses the following third-party services:</p>
     <ul>
-      <li><strong>Firebase (Google)</strong> — Authentication, database, storage, and hosting. See <a href="https://firebase.google.com/support/privacy" target="_blank">Firebase Privacy Policy</a>.</li>
+      <li><strong>Firebase (Google)</strong> — Authentication, database, storage, hosting, and analytics. See <a href="https://firebase.google.com/support/privacy" target="_blank">Firebase Privacy Policy</a>.</li>
+      <li><strong>Google Gemini API</strong> — Machine translation of user-generated posts. See <a href="https://policies.google.com/privacy" target="_blank">Google Privacy Policy</a>.</li>
       <li><strong>Google Maps Platform</strong> — Map display and address search. See <a href="https://policies.google.com/privacy" target="_blank">Google Privacy Policy</a>.</li>
       <li><strong>Apple Push Notification Service (APNs)</strong> — Push notifications on iOS devices.</li>
     </ul>

@@ -41,7 +41,8 @@ export default function TourGuide() {
   const [run, setRun] = useState(false);
 
   useEffect(() => {
-    if (profile?.hasCompletedOnboarding && !profile?.hasCompletedInteractiveTour) {
+    const isReadyForTour = profile?.hasCompletedOnboarding || profile?.isAdmin;
+    if (isReadyForTour && !profile?.hasCompletedInteractiveTour) {
       const timer = setTimeout(() => {
         setRun(true);
       }, 1000);
@@ -140,10 +141,7 @@ export default function TourGuide() {
   ];
 
   // [ALPHA] Tours disabled for closed alpha — UI is cleaner without guided overlays.
-  // TODO: Re-enable tours post-launch with updated steps reflecting the new Feed-first UX.
-  return null;
-
-
+  // TODO: Update steps post-launch to reflect the new Feed-first UX.
   return (
     <Joyride
       steps={steps}

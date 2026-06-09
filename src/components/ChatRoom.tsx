@@ -39,13 +39,14 @@ import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, doc, updateDoc, getDoc, arrayUnion, arrayRemove, setDoc } from 'firebase/firestore';
 import { useAuth } from '../hooks/useAuth';
 import { Message, Item, Chat, UserProfile, Circle } from '../types';
-import { Send, Smile, Languages, Loader2, MessageSquare, CheckCircle2, Clock, Plus, Info, X, Users, Heart, ArrowLeft, BarChart2 } from 'lucide-react';
+import { Send, Smile, Languages, Loader2, MessageSquare, CheckCircle2, Clock, Plus, Info, X, Users, Heart, ArrowLeft, BarChart2, MoreVertical } from 'lucide-react';
 
 import { translateText } from '../services/geminiService';
 import { motion, AnimatePresence } from 'motion/react';
 import { sendNotification } from '../lib/notifications';
 import { getFallbackImage } from '../lib/artDirection';
 import GratitudeFlow from './GratitudeFlow';
+import PublicProfile from './PublicProfile';
 
 const EMOJIS = [
   '😊', '👋', '❤️', '👍', '🙌', '🎉', '✨', '🌟', '💬', '💡',
@@ -367,6 +368,7 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
   const [showGratitudeFlow, setShowGratitudeFlow] = useState(false);
 
   const [gratitudeSent, setGratitudeSent] = useState(false);
+  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
 
   const targetLanguage = profile?.preferredLanguage || 'English';
 
@@ -913,8 +915,12 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
       )}
 
       {chat?.type === 'DIRECT' && otherUser && (
-        <div className="bg-white border-b border-stone-100 px-6 py-4 flex items-center justify-between shadow-sm">
-          <div className="flex items-center gap-3">
+        <div className="bg-white border-b border-stone-100 px-6 py-4 flex items-center justify-between shadow-sm z-10">
+          <div 
+            onClick={() => setSelectedProfileId(otherUser.uid)}
+            className="flex items-center gap-3 cursor-pointer hover:opacity-85 transition-all"
+            title="View neighbor profile"
+          >
             <div className="w-10 h-10 bg-stone-100 rounded-2xl overflow-hidden border border-stone-50">
               {otherUser.photoURL ? (
                 <img src={otherUser.photoURL} alt="" className="w-full h-full object-cover" />
@@ -925,7 +931,7 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
               )}
             </div>
             <div>
-              <h2 className="text-sm font-bold text-stone-900 leading-tight">{otherUser.displayName}</h2>
+              <h2 className="text-sm font-bold text-stone-900 leading-tight hover:underline">{otherUser.displayName}</h2>
               {commonCircles.length > 0 ? (
                 <div className="flex items-center gap-1.5 mt-0.5 animate-in fade-in slide-in-from-left-2 duration-1000">
                   <div className="flex -space-x-1">
@@ -948,6 +954,19 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
                 </div>
               )}
             </div>
+          </div>
+          
+          {/* Header Action: View Profile / Block / Report */}
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setSelectedProfileId(otherUser.uid)}
+              className="p-2 text-stone-500 hover:text-stone-700 hover:bg-stone-100 rounded-xl transition-all"
+              title="View profile, block, or report neighbor"
+              aria-label="View profile, block, or report neighbor"
+            >
+              <MoreVertical size={20} />
+            </button>
           </div>
         </div>
       )}
@@ -1220,6 +1239,13 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
             setShowGratitudeFlow(false);
             setGratitudeSent(true);
           }}
+        />
+      )}
+
+      {selectedProfileId && (
+        <PublicProfile 
+          userId={selectedProfileId} 
+          onClose={() => setSelectedProfileId(null)}
         />
       )}
     </div>
