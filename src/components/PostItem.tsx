@@ -218,12 +218,45 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
 
     setUploading(true);
     try {
+      let dataToUpload: Blob | File = file;
+      const isImage = file.type.startsWith('image/');
+
+      if (isImage) {
+        console.log('[KULA STORAGE] Image detected. Stripping EXIF metadata client-side...');
+        dataToUpload = await new Promise<Blob>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            const img = new Image();
+            img.onload = () => {
+              const canvas = document.createElement('canvas');
+              canvas.width = img.width;
+              canvas.height = img.height;
+              const ctx = canvas.getContext('2d');
+              if (!ctx) {
+                resolve(file);
+                return;
+              }
+              ctx.drawImage(img, 0, 0);
+              canvas.toBlob(
+                (blob) => resolve(blob || file),
+                file.type || 'image/jpeg',
+                0.85
+              );
+            };
+            img.onerror = () => resolve(file);
+            img.src = event.target?.result as string;
+          };
+          reader.onerror = () => resolve(file);
+          reader.readAsDataURL(file);
+        });
+      }
+
       const extension = file.name.split('.').pop() || 'jpg';
       const storagePath = `items/uploads/${user.uid}/${Date.now()}_${Math.random().toString(36).substring(7)}.${extension}`;
       const storageRef = ref(storage, storagePath);
 
       console.log(`[KULA STORAGE] Uploading file to path: ${storagePath}...`);
-      await uploadBytes(storageRef, file);
+      await uploadBytes(storageRef, dataToUpload);
       const downloadUrl = await getDownloadURL(storageRef);
 
       setMedia(prev => [...prev, {
