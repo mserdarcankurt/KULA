@@ -28,7 +28,7 @@ import { isNative } from './platform';
 let getTokenFromFCM: typeof import('firebase/messaging').getToken | null = null;
 let messagingInstance: typeof import('./firebase').messaging = null;
 
-const VAPID_KEY = 'BPVNpGVCfP2EVKufHEcr6blli1HOGndC0COLJpB7VflwTtx0tIAsD-IVvAiTuHkstB44ZNjJHwrS8T6zjgqONbs';
+const VAPID_KEY = import.meta.env.VITE_VAPID_KEY || '';
 
 /**
  * requestNotificationPermission():
