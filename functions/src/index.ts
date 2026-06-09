@@ -255,3 +255,4 @@ export { getNetworkDistances, getTrustPath, getNetworkGraph } from "./trust";
 export { onUserUpdated } from "./users";
 export { onNotificationCreated } from './notifications';
 export { archiveExpiredItems } from './maintenance';
+export { translateText, detectAndTranslateText } from "./gemini";
