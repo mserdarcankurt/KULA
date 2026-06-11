@@ -27,6 +27,7 @@
  *    move reputation counters.
  */
 import { onDocumentCreated, onDocumentDeleted } from "firebase-functions/v2/firestore";
+import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { FieldValue } from "firebase-admin/firestore";
 import { getDb, getDatabaseId } from "./utils";
 
@@ -76,6 +77,63 @@ function mosaicUpdateFor(itemType: string): Record<string, FieldValue> {
   }
   return update;
 }
+
+/**
+ * approveJoinRequest: PRIVATE circles promise "requires approval" — and
+ * firestore.rules deny self-joining them, so admission MUST happen here.
+ * Only the circle creator can approve. The Admin SDK writes the member doc
+ * (bypassing the PRIVATE self-join rule by design), onCircleMemberCreated
+ * maintains memberCount, and the requester gets a notification.
+ */
+export const approveJoinRequest = onCall({ maxInstances: 10 }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "You must be signed in.");
+  }
+  const callerUid = request.auth.uid;
+  const circleId = typeof request.data?.circleId === "string" ? request.data.circleId : "";
+  const requesterId = typeof request.data?.requesterId === "string" ? request.data.requesterId : "";
+  if (!circleId || !requesterId || circleId.length > 256 || requesterId.length > 128) {
+    throw new HttpsError("invalid-argument", "circleId and requesterId are required.");
+  }
+
+  const db = getDb();
+  const circleRef = db.collection("circles").doc(circleId);
+  const requestRef = circleRef.collection("joinRequests").doc(requesterId);
+
+  const [circleSnap, requestSnap] = await Promise.all([circleRef.get(), requestRef.get()]);
+  if (!circleSnap.exists) {
+    throw new HttpsError("not-found", "Circle not found.");
+  }
+  if (circleSnap.get("creatorId") !== callerUid) {
+    throw new HttpsError("permission-denied", "Only the circle creator can approve requests.");
+  }
+  if (!requestSnap.exists) {
+    throw new HttpsError("not-found", "Join request not found (it may have been withdrawn).");
+  }
+
+  // Admit: member doc (count maintained by trigger), requester's joinedCircles,
+  // remove the request, notify the requester.
+  await db.collection("circles").doc(circleId).collection("members").doc(requesterId).set({
+    joinedAt: FieldValue.serverTimestamp(),
+    approvedBy: callerUid,
+  });
+  await db.collection("users").doc(requesterId).set(
+    { joinedCircles: FieldValue.arrayUnion(circleId) },
+    { merge: true }
+  );
+  await requestRef.delete();
+  await db.collection("notifications").add({
+    userId: requesterId,
+    actorId: callerUid,
+    type: "CIRCLE_REQUEST_APPROVED",
+    content: `You're in! Your request to join "${circleSnap.get("name") || "a circle"}" was approved.`,
+    link: `/circles/${circleId}`,
+    isRead: false,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+
+  return { ok: true };
+});
 
 export const onGratitudeCreated = onDocumentCreated(
   { document: "gratitude_notes/{noteId}", database: databaseId, region: "us-central1" },

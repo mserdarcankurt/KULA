@@ -260,4 +260,5 @@ export { archiveExpiredItems } from './maintenance';
 export { translateText, detectAndTranslateText } from "./gemini";
 export { lookupInvite, applyInviteCode, createInvite } from "./invites";
 export { getGuardianStats } from "./admin";
-export { onCircleMemberCreated, onCircleMemberDeleted, onGratitudeCreated } from "./social";
+export { onCircleMemberCreated, onCircleMemberDeleted, onGratitudeCreated, approveJoinRequest } from "./social";
+export { votePoll } from "./chat";

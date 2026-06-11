@@ -42,7 +42,8 @@
  * CALLED BY: Explore.tsx (CIRCLES view mode)
  */
 import React, { useState, useEffect } from 'react';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, functions, handleFirestoreError, OperationType } from '../lib/firebase';
+import { httpsCallable } from 'firebase/functions';
 import { fetchUserDocsByIds } from '../lib/batchFetch';
 import { collection, query, onSnapshot, orderBy, addDoc, serverTimestamp, doc, setDoc, deleteDoc, getDoc, updateDoc, arrayUnion, arrayRemove, where, getDocs } from 'firebase/firestore';
 import { useAuth } from '../hooks/useAuth';
@@ -64,22 +65,24 @@ interface CirclesProps {
 interface CircleCardProps {
   circle: Circle;
   profile: any;
-  onJoin: (id: string) => void;
+  onJoin: (id: string, privacy?: string) => void;
   onLeave: (e: any, id: string) => void;
   onSelect: (circle: Circle) => void;
+  requested?: boolean;
 }
 
-function CircleCard({ circle, profile, onJoin, onLeave, onSelect }: CircleCardProps) {
+function CircleCard({ circle, profile, onJoin, onLeave, onSelect, requested }: CircleCardProps) {
   const isJoined = profile?.joinedCircles?.includes(circle.id);
-  
+  const isPrivate = circle.privacy === 'PRIVATE';
+
   const handleDragEnd = (_: any, info: any) => {
-    // Swipe Right (Open/Join)
+    // Swipe Right (Open/Join — or Request for private circles)
     if (info.offset.x > 80) {
       if (!isJoined) {
-        onJoin(circle.id);
+        onJoin(circle.id, circle.privacy);
       }
-      // Give join state a moment to propagate if needed, but usually we can just select it
-      onSelect(circle);
+      // Private circles can't be entered until approved.
+      if (!isPrivate || isJoined) onSelect(circle);
     }
     // Swipe Left (Leave - only if joined)
     else if (info.offset.x < -80 && isJoined) {
@@ -134,12 +137,16 @@ function CircleCard({ circle, profile, onJoin, onLeave, onSelect }: CircleCardPr
                 <LogOut size={16} />
               </button>
             </div>
+          ) : requested ? (
+            <span className="px-4 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-full text-[10px] font-black uppercase tracking-widest shadow-sm">
+              Requested
+            </span>
           ) : (
-            <button 
-              onClick={(e) => { e.stopPropagation(); onJoin(circle.id); }}
+            <button
+              onClick={(e) => { e.stopPropagation(); onJoin(circle.id, circle.privacy); }}
               className="px-4 py-1.5 bg-stone-100 border border-stone-200 text-brand rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-brand hover:text-white transition-all shadow-sm"
             >
-              Join
+              {isPrivate ? 'Request' : 'Join'}
             </button>
           )}
         </div>
@@ -209,6 +216,11 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
   const [sortBy, setSortBy] = useState<'RECENT' | 'NAME' | 'MEMBERS'>('RECENT');
   const [showFilters, setShowFilters] = useState(false);
   const [showInfoCard, setShowInfoCard] = useState(true);
+
+  // PRIVATE circle approval flow
+  const [requestedCircles, setRequestedCircles] = useState<Set<string>>(new Set());
+  const [pendingRequests, setPendingRequests] = useState<{ uid: string; name: string; photo: string | null }[]>([]);
+  const [approvingUid, setApprovingUid] = useState<string | null>(null);
 
 
   const channels = ['#General', '#Announcements', '#DailyGratitude', '#UrgentNeeds'];
@@ -342,9 +354,71 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
     });
   }, [showInviteModal, user]);
 
+  // Which PRIVATE circles has this user already requested to join?
+  // (Own-request reads are allowed by rules; private circles in a list are
+  // rare, so a getDoc per private circle is fine.)
+  useEffect(() => {
+    if (!user || circles.length === 0) return;
+    const privateUnjoined = circles.filter(
+      c => c.privacy === 'PRIVATE' && !profile?.joinedCircles?.includes(c.id)
+    );
+    if (privateUnjoined.length === 0) return;
+    Promise.all(
+      privateUnjoined.map(async c => {
+        const snap = await getDoc(doc(db, 'circles', c.id, 'joinRequests', user.uid)).catch(() => null);
+        return snap?.exists() ? c.id : null;
+      })
+    ).then(ids => {
+      const found = ids.filter(Boolean) as string[];
+      if (found.length > 0) setRequestedCircles(prev => new Set([...prev, ...found]));
+    });
+  }, [circles, user, profile?.joinedCircles]);
+
+  // Creator-only: live list of pending join requests for the open circle.
+  useEffect(() => {
+    if (!selectedCircle || circleView !== 'MEMBERS' || selectedCircle.creatorId !== user?.uid) {
+      setPendingRequests([]);
+      return;
+    }
+    const unsub = onSnapshot(
+      query(collection(db, 'circles', selectedCircle.id, 'joinRequests')),
+      snap => setPendingRequests(snap.docs.map(d => ({
+        uid: d.id,
+        name: d.data().name || 'A neighbor',
+        photo: d.data().photo || null,
+      }))),
+      err => console.error('Error loading join requests:', err)
+    );
+    return unsub;
+  }, [selectedCircle, circleView, user?.uid]);
+
+  const handleApproveRequest = async (requesterId: string) => {
+    if (!selectedCircle || approvingUid) return;
+    setApprovingUid(requesterId);
+    try {
+      const approveFn = httpsCallable<{ circleId: string; requesterId: string }, { ok: boolean }>(functions, 'approveJoinRequest');
+      await approveFn({ circleId: selectedCircle.id, requesterId });
+      // The joinRequests listener removes the row; onCircleMemberCreated
+      // updates the count; the members listener picks up the new member.
+    } catch (err) {
+      console.error('Error approving request:', err);
+    } finally {
+      setApprovingUid(null);
+    }
+  };
+
+  const handleDeclineRequest = async (requesterId: string) => {
+    if (!selectedCircle) return;
+    try {
+      await deleteDoc(doc(db, 'circles', selectedCircle.id, 'joinRequests', requesterId));
+    } catch (err) {
+      console.error('Error declining request:', err);
+    }
+  };
+
   useEffect(() => {
     if (!selectedCircle || circleView !== 'MEMBERS') return;
-    
+
     setLoadingMembers(true);
     const q = query(collection(db, 'circles', selectedCircle.id, 'members'));
     const unsubscribe = onSnapshot(q, async (snapshot) => {
@@ -422,13 +496,33 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
     }
   };
 
-  const handleJoin = async (circleId: string) => {
+  const handleJoin = async (circleId: string, privacyHint?: string) => {
     if (!user) return;
     try {
+      // Resolve privacy: hint from the call site, then loaded list, then a doc read.
+      let privacy = privacyHint || circles.find(c => c.id === circleId)?.privacy;
+      if (!privacy) {
+        const snap = await getDoc(doc(db, 'circles', circleId));
+        privacy = snap.exists() ? snap.data().privacy : undefined;
+      }
+
+      // PRIVATE circles require creator approval: file a join request instead
+      // (firestore.rules deny self-joining PRIVATE circles; admission happens
+      // via the approveJoinRequest Cloud Function).
+      if (privacy === 'PRIVATE') {
+        await setDoc(doc(db, 'circles', circleId, 'joinRequests', user.uid), {
+          requestedAt: serverTimestamp(),
+          name: profile?.displayName || 'A neighbor',
+          photo: profile?.photoURL || null,
+        });
+        setRequestedCircles(prev => new Set(prev).add(circleId));
+        return;
+      }
+
       await setDoc(doc(db, 'circles', circleId, 'members', user.uid), {
         joinedAt: serverTimestamp()
       });
-      
+
       // Update user profile
       await updateDoc(doc(db, 'users', user.uid), {
         joinedCircles: arrayUnion(circleId)
@@ -490,7 +584,7 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
         return;
       }
 
-      await handleJoin(joinCode.trim());
+      await handleJoin(joinCode.trim(), circleSnap.data().privacy);
       setShowJoinCode(false);
       setJoinCode('');
     } catch (err) {
@@ -688,7 +782,7 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
               onClick={async () => {
                 setJoiningCode(true);
                 try {
-                  await handleJoin(pendingInviteCircle.id);
+                  await handleJoin(pendingInviteCircle.id, pendingInviteCircle.privacy);
                 } catch (e) {
                   console.error("Error joining from invite screen:", e);
                 } finally {
@@ -838,6 +932,44 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
               <Discovery location={profile?.location || null} circleId={selectedCircle.id} onNavigateToChat={onNavigateToChat} />
             ) : circleView === 'MEMBERS' ? (
               <div className="p-6">
+                {pendingRequests.length > 0 && (
+                  <div className="mb-8">
+                    <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-600 mb-4 px-1">
+                      Waiting at the Door ({pendingRequests.length})
+                    </h4>
+                    <div className="grid gap-3">
+                      {pendingRequests.map(req => (
+                        <div key={req.uid} className="flex items-center justify-between p-4 bg-amber-50/60 border border-amber-100 rounded-3xl shadow-sm">
+                          <div className="flex items-center gap-3">
+                            <div className="w-12 h-12 bg-stone-100 rounded-2xl overflow-hidden border border-stone-50">
+                              {req.photo ? (
+                                <img referrerPolicy="no-referrer" src={req.photo} alt={req.name} className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-stone-300 font-bold">{req.name.charAt(0)}</div>
+                              )}
+                            </div>
+                            <span className="font-bold text-stone-900">{req.name}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleApproveRequest(req.uid)}
+                              disabled={approvingUid === req.uid}
+                              className="px-4 py-2 bg-stone-900 text-white rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-brand transition-all disabled:opacity-50"
+                            >
+                              {approvingUid === req.uid ? 'Opening…' : 'Welcome In'}
+                            </button>
+                            <button
+                              onClick={() => handleDeclineRequest(req.uid)}
+                              className="px-3 py-2 text-stone-400 hover:text-red-500 rounded-full text-[10px] font-black uppercase tracking-widest transition-colors"
+                            >
+                              Decline
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-stone-400 mb-6 px-1">Circle Members ({circleMembers.length})</h4>
                 {loadingMembers ? (
                   <div className="text-center py-20 text-stone-300 italic">Loading neighbors...</div>
@@ -1261,6 +1393,7 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
                         onJoin={handleJoin}
                         onLeave={handleLeave}
                         onSelect={setSelectedCircle}
+                        requested={requestedCircles.has(circle.id)}
                       />
                     ))}
                   </div>
@@ -1280,6 +1413,7 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
                         onJoin={handleJoin}
                         onLeave={handleLeave}
                         onSelect={setSelectedCircle}
+                        requested={requestedCircles.has(circle.id)}
                       />
                     ))}
                   </div>
@@ -1295,6 +1429,7 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
                 onJoin={handleJoin}
                 onLeave={handleLeave}
                 onSelect={setSelectedCircle}
+                requested={requestedCircles.has(circle.id)}
               />
             ))
           )

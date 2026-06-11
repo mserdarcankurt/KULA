@@ -29,6 +29,29 @@ export const onNotificationCreated = onDocumentCreated(
       return;
     }
 
+    // SPAM THROTTLE: firestore.rules pin actorId to the creator but cannot
+    // rate-limit volume — a hostile client could loop addDoc to push-bomb
+    // any user. Cap each actor at 30 notifications/minute (far above any
+    // legitimate behavior, including fast Discovery swiping); past the cap
+    // the spam doc is deleted and no push is sent.
+    const actorId = notificationData.actorId;
+    if (actorId) {
+      try {
+        const windowStart = admin.firestore.Timestamp.fromMillis(Date.now() - 60_000);
+        const recent = await getDb().collection("notifications")
+          .where("actorId", "==", actorId)
+          .where("createdAt", ">", windowStart)
+          .count().get();
+        if (recent.data().count > 30) {
+          console.warn(`[THROTTLE] actor ${actorId} exceeded 30 notifications/min — dropping ${snapshot.ref.path}`);
+          await snapshot.ref.delete();
+          return;
+        }
+      } catch (err) {
+        console.error("[THROTTLE] rate check failed (continuing):", err);
+      }
+    }
+
     // 1. Fetch the user's profile to get their fcmTokens
     const userRef = getDb().collection('users').doc(userId);
   const userDoc = await userRef.get();

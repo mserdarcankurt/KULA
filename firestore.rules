@@ -196,6 +196,28 @@ service cloud.firestore {
           && get(/databases/$(database)/documents/circles/$(circleId)).data.privacy != 'PRIVATE';
         allow delete: if isSignedIn() && (memberId == request.auth.uid || isAdmin());
       }
+
+      // Join requests for PRIVATE circles: circles/{circleId}/joinRequests/{requesterId}
+      // Doc ID == requester's UID. Admission happens via the approveJoinRequest
+      // Cloud Function (creator-gated, Admin SDK writes the member doc).
+      match /joinRequests/{requesterId} {
+        // Requesters see their own request; the circle creator sees all.
+        allow read: if isSignedIn() && (
+          requesterId == request.auth.uid
+          || get(/databases/$(database)/documents/circles/$(circleId)).data.creatorId == request.auth.uid
+          || isAdmin()
+        );
+        // You may only request for YOURSELF, only on PRIVATE circles.
+        allow create: if isOwner(requesterId)
+          && get(/databases/$(database)/documents/circles/$(circleId)).data.privacy == 'PRIVATE'
+          && request.resource.data.get('name', '').size() <= 120;
+        // Withdraw (self) or decline (creator/admin).
+        allow delete: if isSignedIn() && (
+          requesterId == request.auth.uid
+          || get(/databases/$(database)/documents/circles/$(circleId)).data.creatorId == request.auth.uid
+          || isAdmin()
+        );
+      }
     }
 
     // ─── Chats ────────────────────────────────────────────
@@ -209,10 +231,17 @@ service cloud.firestore {
       allow read: if isSignedIn()
         && (resource == null || canAccessChatData(resource.data));
 
+      // DIRECT creation also verifies the OTHER participant hasn't blocked
+      // the creator (one get() at creation time only).
       allow create: if isSignedIn() && (
         (request.resource.data.get('type', '') == 'DIRECT'
           && request.resource.data.participants.hasAny([request.auth.uid])
-          && request.resource.data.participants.size() == 2)
+          && request.resource.data.participants.size() == 2
+          && !get(/databases/$(database)/documents/users/$(
+                request.resource.data.participants[0] == request.auth.uid
+                  ? request.resource.data.participants[1]
+                  : request.resource.data.participants[0]
+              )).data.get('blockedUsers', []).hasAny([request.auth.uid]))
         || (request.resource.data.get('type', '') == 'CHANNEL'
           && request.resource.data.get('circleId', '') != ''
           && isCircleMember(request.resource.data.circleId)
@@ -220,23 +249,31 @@ service cloud.firestore {
       );
 
       // UPDATE: members may update preview/read-state fields, but can never
-      // rewrite the membership or identity of the chat itself.
+      // rewrite the membership/identity of the chat or touch the server-
+      // maintained block list — and blocked users can't update at all.
       allow update: if isSignedIn()
         && canAccessChatData(resource.data)
-        && !changedKeys().hasAny(['participants', 'type', 'circleId']);
+        && !resource.data.get('blockedUids', []).hasAny([request.auth.uid])
+        && !changedKeys().hasAny(['participants', 'type', 'circleId', 'blockedUids']);
 
       allow delete: if isAdmin();
 
       // Messages sub-collection: chats/{chatId}/messages/{messageId}
       match /messages/{messageId} {
         allow read: if canAccessChat(chatId);
-        // senderId pinned: you can only send as yourself.
+        // senderId pinned, and blocked users cannot write into the chat
+        // (blockedUids is maintained server-side by the users.ts trigger
+        // when someone's blockedUsers list changes).
         allow create: if canAccessChat(chatId)
-          && request.resource.data.senderId == request.auth.uid;
-        // Members may vote on polls, claim urgent needs, and bump thread
-        // counts — but cannot edit each other's message text.
+          && request.resource.data.senderId == request.auth.uid
+          && !get(/databases/$(database)/documents/chats/$(chatId)).data
+               .get('blockedUids', []).hasAny([request.auth.uid]);
+        // Members may claim urgent needs and bump thread counts — poll votes
+        // go through the votePoll Cloud Function (client poll writes allowed
+        // arbitrary overwrites of other people's votes), and message text is
+        // never editable by others.
         allow update: if canAccessChat(chatId)
-          && changedKeys().hasOnly(['poll', 'metadata', 'replyCount']);
+          && changedKeys().hasOnly(['metadata', 'replyCount']);
         allow delete: if isAdmin();
 
         // Thread replies: chats/{chatId}/messages/{messageId}/replies/{replyId}
@@ -244,9 +281,9 @@ service cloud.firestore {
         match /replies/{replyId} {
           allow read: if canAccessChat(chatId);
           allow create: if canAccessChat(chatId)
-            && request.resource.data.senderId == request.auth.uid;
-          allow update: if canAccessChat(chatId)
-            && changedKeys().hasOnly(['poll', 'metadata']);
+            && request.resource.data.senderId == request.auth.uid
+            && !get(/databases/$(database)/documents/chats/$(chatId)).data
+                 .get('blockedUids', []).hasAny([request.auth.uid]);
           allow delete: if isAdmin();
         }
       }
@@ -268,11 +305,15 @@ service cloud.firestore {
     // "from" identity cannot be forged.
     match /notifications/{notifId} {
       allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      // The recipient must not have blocked the actor (one get() per create;
+      // volume is further rate-limited server-side in onNotificationCreated).
       allow create: if isSignedIn()
         && request.resource.data.actorId == request.auth.uid
         && request.resource.data.userId is string
         && request.resource.data.get('content', '') is string
-        && request.resource.data.get('content', '').size() <= 500;
+        && request.resource.data.get('content', '').size() <= 500
+        && !get(/databases/$(database)/documents/users/$(request.resource.data.userId))
+             .data.get('blockedUsers', []).hasAny([request.auth.uid]);
       // Recipients may only flip read-state.
       allow update: if isSignedIn()
         && resource.data.userId == request.auth.uid

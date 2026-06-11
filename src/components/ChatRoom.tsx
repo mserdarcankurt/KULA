@@ -35,7 +35,8 @@
  * READS FROM: chats/{chatId}, users/{otherUserId}, items/{itemId}
  */
 import React, { useState, useEffect, useRef } from 'react';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, functions, handleFirestoreError, OperationType } from '../lib/firebase';
+import { httpsCallable } from 'firebase/functions';
 import { fetchUserDocsByIds } from '../lib/batchFetch';
 import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, doc, updateDoc, getDoc, arrayUnion, arrayRemove, setDoc } from 'firebase/firestore';
 import { useAuth } from '../hooks/useAuth';
@@ -754,26 +755,16 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
 
   const handleVote = async (messageId: string, optionKey: string) => {
     if (!user) return;
-    
-    const msgRef = doc(db, 'chats', chatId, 'messages', messageId);
-    const msgSnap = await getDoc(msgRef);
-    if (!msgSnap.exists()) return;
-    
-    const msgData = msgSnap.data() as Message;
-    if (!msgData.poll) return;
-
-    // Remove user votes from all options first to allow re-voting (or just use one vote)
-    const newOptions = { ...msgData.poll.options };
-    Object.keys(newOptions).forEach(key => {
-      newOptions[key].votes = newOptions[key].votes.filter(v => v !== user.uid);
-    });
-    
-    // Add new vote
-    newOptions[optionKey].votes.push(user.uid);
-
-    await updateDoc(msgRef, {
-      'poll.options': newOptions
-    });
+    try {
+      // Votes apply server-side (functions/src/chat.ts votePoll) — the old
+      // client-side overwrite let any member rewrite everyone's votes, and
+      // firestore.rules now deny direct poll writes entirely. The messages
+      // listener picks up the result.
+      const votePollFn = httpsCallable<{ chatId: string; messageId: string; optionKey: string }, { ok: boolean }>(functions, 'votePoll');
+      await votePollFn({ chatId, messageId, optionKey });
+    } catch (err) {
+      console.error('Vote failed:', err);
+    }
   };
 
   const confirmHandover = async () => {

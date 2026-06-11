@@ -108,6 +108,36 @@ export const onUserUpdated = onDocumentUpdated(
       return; // Stop execution here
     }
 
+    // ── BLOCK ENFORCEMENT SYNC ─────────────────────────────────────────
+    // Blocking used to be client-side UX only. When blockedUsers changes,
+    // mirror it onto the pair's DIRECT chat docs as blockedUids — the
+    // message-create rule in firestore.rules denies writes from any UID in
+    // that array, at zero extra read cost (the rule already gets the chat).
+    const beforeBlocked: string[] = before.blockedUsers || [];
+    const afterBlocked: string[] = after.blockedUsers || [];
+    const addedBlocks = afterBlocked.filter(u => !beforeBlocked.includes(u));
+    const removedBlocks = beforeBlocked.filter(u => !afterBlocked.includes(u));
+
+    if (addedBlocks.length > 0 || removedBlocks.length > 0) {
+      try {
+        const chatsSnap = await db.collection("chats")
+          .where("participants", "array-contains", userId).get();
+        for (const chatDoc of chatsSnap.docs) {
+          if (chatDoc.get("type") !== "DIRECT") continue;
+          const parts: string[] = chatDoc.get("participants") || [];
+          const other = parts.find(p => p !== userId);
+          if (!other) continue;
+          if (addedBlocks.includes(other)) {
+            await chatDoc.ref.update({ blockedUids: admin.firestore.FieldValue.arrayUnion(other) });
+          } else if (removedBlocks.includes(other)) {
+            await chatDoc.ref.update({ blockedUids: admin.firestore.FieldValue.arrayRemove(other) });
+          }
+        }
+      } catch (err) {
+        console.error(`[BLOCK SYNC] failed for user ${userId}:`, err);
+      }
+    }
+
     const nameChanged = before.displayName !== after.displayName;
     const photoChanged = before.photoURL !== after.photoURL;
     const orgChanged = before.isOrganization !== after.isOrganization;
