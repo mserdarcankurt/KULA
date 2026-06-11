@@ -24,6 +24,7 @@
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
+import ErrorBoundary from './components/ErrorBoundary.tsx';
 import './index.css';
 import { testConnection } from './lib/firebase';
 
@@ -51,6 +52,8 @@ if ('serviceWorker' in navigator) {
 // <App /> is defined in src/App.tsx — it wraps everything in <AuthProvider> first.
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 );

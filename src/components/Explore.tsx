@@ -15,7 +15,8 @@ import { useAuth } from '../hooks/useAuth';
 import { ChevronDown, Sliders, MessageCircle, Heart, Camera, Image as ImageIcon, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ART_DIRECTION } from '../lib/artDirection';
-import { db } from '../lib/firebase';
+import { db, storage } from '../lib/firebase';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { doc, getDoc, collection, query, orderBy, limit, collectionGroup, onSnapshot, getDocs, addDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { Circle, Item } from '../types';
 import { ItemDetailsSheet } from './ItemDetailsSheet';
@@ -25,7 +26,9 @@ import { OwnerName } from './OwnerName';
 import { formatDistanceToNow } from 'date-fns';
 import { logEvent } from '../lib/analytics';
 
-// Helper to compress images client-side before uploading to Firestore as base64 URLs
+// Helper to compress images client-side. The base64 result is used for the
+// instant local preview; on submit it's converted to a Blob and uploaded to
+// Cloud Storage (only the download URL is stored in Firestore).
 const compressImage = (base64Str: string, maxWidth = 800, maxHeight = 800): Promise<string> => {
   return new Promise((resolve) => {
     const img = new Image();
@@ -647,6 +650,19 @@ export default function Explore({
     try {
       const resolvedLocation = profile?.neighborhoodCenter || profile?.location || location || null;
 
+      // Upload the (already client-compressed) photo to Cloud Storage and
+      // store only the download URL. Base64 data-URIs in Firestore documents
+      // bloat every read and risk the 1MB doc limit; mediaPreview stays
+      // base64 only for the instant local preview.
+      let imageUrls: string[] = [];
+      if (mediaPreview) {
+        const blob = await (await fetch(mediaPreview)).blob();
+        const path = `items/uploads/${user.uid}/${Date.now()}_flow.jpg`;
+        const fileRef = storageRef(storage, path);
+        await uploadBytes(fileRef, blob, { contentType: 'image/jpeg' });
+        imageUrls = [await getDownloadURL(fileRef)];
+      }
+
       await addDoc(collection(db, 'items'), {
         ownerId: user.uid,
         ownerName: profile.displayName || 'Neighbor',
@@ -666,7 +682,7 @@ export default function Explore({
         targetCircles: [],
         participants: [],
         neededParticipants: 0,
-        images: mediaPreview ? [mediaPreview] : [],
+        images: imageUrls,
         videos: [],
         createdAt: serverTimestamp(),
       });
@@ -675,7 +691,7 @@ export default function Explore({
         type: 'FLOW',
         category: 'Community',
         sharingMode: null,
-        has_images: !!mediaPreview,
+        has_images: imageUrls.length > 0,
         has_videos: false,
         visibility_reach: 'PUBLIC',
         reach_types_count: 1,

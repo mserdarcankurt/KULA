@@ -5,7 +5,7 @@
  * to every component in the app. This way, any screen can easily check: 
  * "Is anyone logged in?" or "What is the name of the current user?".
  */
-import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged, User } from '../lib/firebase';
 import { signInWithCredential, GoogleAuthProvider, signInAnonymously, OAuthProvider } from 'firebase/auth';
 import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
@@ -58,11 +58,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 
 
-  const updateProfile = async (updates: Partial<UserProfile>) => {
+  // useCallback: keeps the function reference stable across renders so that
+  // the memoized context value (and every useAuth() consumer) doesn't
+  // re-render on unrelated state changes.
+  const updateProfile = useCallback(async (updates: Partial<UserProfile>) => {
     if (user) {
       await updateDoc(doc(db, 'users', user.uid), updates);
     }
-  };
+  }, [user]);
 
   // Expose test login helper to window during local development strictly for headless automated E2E testing.
   // This is completely tree-shaken and stripped from production builds.
@@ -233,7 +236,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
    * RE-ENTRY GUARD: Uses a ref to prevent the function from being called again
    * while a sign-in is already in progress (prevents the iOS dismiss-and-retrigger loop).
    */
-  const signIn = async (provider: 'google' | 'apple' = 'google') => {
+  const signIn = useCallback(async (provider: 'google' | 'apple' = 'google') => {
     // Prevent re-entry: if signIn is already running, bail out.
     if (signInInProgress.current) {
       console.warn('[KULA AUTH] signIn() called while already in progress — ignoring.');
@@ -304,27 +307,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       signInInProgress.current = false;
     }
-  };
+  }, []);
 
   /**
    * logout():
    * Clears the session from both our app state and Firebase's servers.
    */
-  const logout = async () => {
+  const logout = useCallback(async () => {
     try {
       logEvent('logout');
       await signOut(auth);
     } catch (error) {
       console.error('Logout error:', error);
     }
-  };
+  }, []);
 
   /**
    * We pass all our state and functions into the 'Provider'.
    * Any child component inside <AuthProvider> can now access these.
+   * useMemo: the value object is only recreated when its contents actually
+   * change — without it, every render of AuthProvider handed out a brand-new
+   * object and forced every useAuth() consumer in the app to re-render.
    */
+  const contextValue = useMemo(
+    () => ({ user, profile, loading, signIn, logout, updateProfile }),
+    [user, profile, loading, signIn, logout, updateProfile]
+  );
+
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signIn, logout, updateProfile }}>
+    <AuthContext.Provider value={contextValue}>
       {children}
     </AuthContext.Provider>
   );

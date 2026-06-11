@@ -2,11 +2,15 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
     tailwindcss(),
   ],
+  // Strip console.* and debugger statements from PRODUCTION builds only —
+  // they leak internals (UIDs, Firestore paths) and cost runtime on low-end
+  // devices. Dev builds keep full logging.
+  esbuild: mode === 'production' ? { drop: ['console', 'debugger'] as ('console' | 'debugger')[] } : {},
   server: {
     proxy: {
       '/api': {
@@ -46,4 +50,4 @@ export default defineConfig({
   define: {
     'process.env.GOOGLE_MAPS_PLATFORM_KEY': JSON.stringify(process.env.GOOGLE_MAPS_PLATFORM_KEY || '')
   }
-});
+}));

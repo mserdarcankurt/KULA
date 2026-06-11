@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
-import { collection, query, where, orderBy, onSnapshot, doc, writeBatch } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, doc, writeBatch, limit } from 'firebase/firestore';
 import { useAuth } from './useAuth';
 import { Notification } from '../types';
 
@@ -16,10 +16,13 @@ export function useNotifications() {
       return;
     }
 
+    // Bounded: without limit() this listener downloads every notification the
+    // user has ever received, growing forever. 50 covers the overlay UI.
     const q = query(
       collection(db, 'notifications'),
       where('userId', '==', user.uid),
-      orderBy('createdAt', 'desc')
+      orderBy('createdAt', 'desc'),
+      limit(50)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -45,12 +48,16 @@ export function useNotifications() {
     if (unread.length === 0) return;
 
     try {
-      const batch = writeBatch(db);
-      unread.forEach(n => {
-        const ref = doc(db, 'notifications', n.id);
-        batch.update(ref, { isRead: true });
-      });
-      await batch.commit();
+      // Firestore batches cap at 500 operations — chunk to stay safe.
+      const CHUNK = 450;
+      for (let i = 0; i < unread.length; i += CHUNK) {
+        const batch = writeBatch(db);
+        unread.slice(i, i + CHUNK).forEach(n => {
+          const ref = doc(db, 'notifications', n.id);
+          batch.update(ref, { isRead: true });
+        });
+        await batch.commit();
+      }
     } catch (err) {
       console.error("Failed to mark all notifications as read:", err);
     }
