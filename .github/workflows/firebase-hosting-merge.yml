@@ -11,7 +11,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The build needs the same VITE_ keys as a local build (.env is not in
+      # git). They come from GitHub repo secrets: Settings → Secrets and
+      # variables → Actions. Without them, Maps and web push ship broken.
       - run: npm install && npm run build
+        env:
+          VITE_GOOGLE_MAPS_PLATFORM_KEY: ${{ secrets.VITE_GOOGLE_MAPS_PLATFORM_KEY }}
+          VITE_VAPID_KEY: ${{ secrets.VITE_VAPID_KEY }}
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
