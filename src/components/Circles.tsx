@@ -43,6 +43,7 @@
  */
 import React, { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { fetchUserDocsByIds } from '../lib/batchFetch';
 import { collection, query, onSnapshot, orderBy, addDoc, serverTimestamp, doc, setDoc, deleteDoc, getDoc, updateDoc, arrayUnion, arrayRemove, where, getDocs } from 'firebase/firestore';
 import { useAuth } from '../hooks/useAuth';
 import { Circle, UserProfile, Chat } from '../types';
@@ -350,14 +351,12 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
       const memberIds = snapshot.docs.map(doc => doc.id);
       
       try {
-        const memberProfiles: UserProfile[] = [];
-        // Fetch profiles in batches to avoid too many requests
-        for (const id of memberIds) {
-          const userDoc = await getDoc(doc(db, 'users', id));
-          if (userDoc.exists()) {
-            memberProfiles.push({ uid: userDoc.id, ...userDoc.data() } as UserProfile);
-          }
-        }
+        // Batched: chunked 'in' queries instead of one sequential getDoc per
+        // member (the comment used to claim batching — now it's true).
+        const profiles = await fetchUserDocsByIds(memberIds);
+        const memberProfiles = memberIds
+          .filter(id => profiles.has(id))
+          .map(id => ({ uid: id, ...profiles.get(id) } as UserProfile));
         setCircleMembers(memberProfiles);
       } catch (err) {
         console.error("Error fetching member profiles:", err);

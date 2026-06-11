@@ -50,6 +50,7 @@ import { httpsCallable } from 'firebase/functions';
 import { collection, query, where, onSnapshot, serverTimestamp, doc, updateDoc, setDoc, getDoc, addDoc, deleteDoc } from 'firebase/firestore';
 import PublicProfile from './PublicProfile';
 import { generateThematicCode, createUniqueInvite } from '../utils/inviteGenerator';
+import { fetchUserDocsByIds } from '../lib/batchFetch';
 import { Item, SavedLocation, UserPrivacySettings, TrustPrivacyLevel } from '../types';
 import SeedData from './SeedData';
 import TrustMosaicComponent from './TrustMosaic';
@@ -918,19 +919,19 @@ export default function Profile({
       where('status', '==', 'PENDING')
     );
     const unsub = onSnapshot(q, async (snap) => {
-      const vouches: any[] = [];
-      for (const d of snap.docs) {
+      // Batched: one chunked 'in' query for all senders instead of one
+      // sequential getDoc per vouch on every snapshot (the old N+1).
+      const senders = await fetchUserDocsByIds(snap.docs.map(d => d.data().fromUserId));
+      const vouches = snap.docs.map(d => {
         const data = d.data();
-        // Fetch the sender's profile
-        const senderSnap = await getDoc(doc(db, 'users', data.fromUserId));
-        const senderData = senderSnap.exists() ? senderSnap.data() : null;
-        vouches.push({
+        const senderData = senders.get(data.fromUserId);
+        return {
           id: d.id,
           ...data,
           senderName: senderData?.displayName || 'A neighbor',
           senderPhoto: senderData?.photoURL || null,
-        });
-      }
+        };
+      });
       setPendingVouches(vouches);
     });
     return () => unsub();

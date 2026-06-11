@@ -259,4 +259,5 @@ export { onNotificationCreated } from './notifications';
 export { archiveExpiredItems } from './maintenance';
 export { translateText, detectAndTranslateText } from "./gemini";
 export { lookupInvite, applyInviteCode, createInvite } from "./invites";
+export { getGuardianStats } from "./admin";
 export { onCircleMemberCreated, onCircleMemberDeleted, onGratitudeCreated } from "./social";

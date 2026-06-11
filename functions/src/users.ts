@@ -23,85 +23,61 @@ export const onUserUpdated = onDocumentUpdated(
     if (after.status === 'DELETED' && before.status !== 'DELETED') {
       console.log(`[DELETION TRIGGER] Running full account deletion for user: ${userId}`);
       try {
-        // 1. Delete private user document
-        await db.collection("users_private").doc(userId).delete().catch(e => console.error("Error deleting users_private:", e));
+        // ── Phase A: gather everything that needs deleting, in parallel ──
+        const [
+          swipesSnap, vouchesFromSnap, vouchesToSnap,
+          notesFromSnap, notesToSnap, reportsSnap,
+          notificationsSnap, invitesCreatedSnap, invitesUsedSnap,
+          itemsSnap, chatsSnap,
+        ] = await Promise.all([
+          db.collection("swipes").where("swiperId", "==", userId).get(),
+          db.collection("vouches").where("fromUserId", "==", userId).get(),
+          db.collection("vouches").where("toUserId", "==", userId).get(),
+          db.collection("gratitude_notes").where("fromUserId", "==", userId).get(),
+          db.collection("gratitude_notes").where("toUserId", "==", userId).get(),
+          db.collection("reports").where("reporterId", "==", userId).get(),
+          db.collection("notifications").where("userId", "==", userId).get(),
+          db.collection("invites").where("createdBy", "==", userId).get(),
+          db.collection("invites").where("usedBy", "==", userId).get(),
+          db.collection("items").where("ownerId", "==", userId).get(),
+          db.collection("chats").where("participants", "array-contains", userId).get(),
+        ]);
 
-        // 2. Query and delete all items owned by user (including comments subcollection)
-        const itemsSnap = await db.collection("items").where("ownerId", "==", userId).get();
-        for (const itemDoc of itemsSnap.docs) {
-          const commentsSnap = await itemDoc.ref.collection("comments").get();
-          for (const commentDoc of commentsSnap.docs) {
-            await commentDoc.ref.delete().catch(() => {});
-          }
-          await itemDoc.ref.delete().catch(e => console.error("Error deleting item:", itemDoc.id, e));
-        }
+        // ── Phase B: flat documents via BulkWriter (parallel, auto-retried,
+        // auto-batched — replaces hundreds of sequential awaited deletes) ──
+        const writer = db.bulkWriter();
+        writer.onWriteError((err) => {
+          console.error(`[DELETION TRIGGER] write failed (attempt ${err.failedAttempts}):`, err.documentRef.path);
+          return err.failedAttempts < 3; // retry up to 3 times
+        });
 
-        // 3. Query and delete all swipes by this user
-        const swipesSnap = await db.collection("swipes").where("swiperId", "==", userId).get();
-        for (const swipeDoc of swipesSnap.docs) {
-          await swipeDoc.ref.delete().catch(() => {});
-        }
-
-        // 4. Query and delete all vouches involving this user
-        const vouchesFromSnap = await db.collection("vouches").where("fromUserId", "==", userId).get();
-        for (const vDoc of vouchesFromSnap.docs) {
-          await vDoc.ref.delete().catch(() => {});
-        }
-        const vouchesToSnap = await db.collection("vouches").where("toUserId", "==", userId).get();
-        for (const vDoc of vouchesToSnap.docs) {
-          await vDoc.ref.delete().catch(() => {});
-        }
-
-        // 5. Query and delete all gratitude notes involving this user
-        const notesFromSnap = await db.collection("gratitude_notes").where("fromUserId", "==", userId).get();
-        for (const nDoc of notesFromSnap.docs) {
-          await nDoc.ref.delete().catch(() => {});
-        }
-        const notesToSnap = await db.collection("gratitude_notes").where("toUserId", "==", userId).get();
-        for (const nDoc of notesToSnap.docs) {
-          await nDoc.ref.delete().catch(() => {});
+        for (const snap of [
+          swipesSnap, vouchesFromSnap, vouchesToSnap, notesFromSnap, notesToSnap,
+          reportsSnap, notificationsSnap, invitesCreatedSnap, invitesUsedSnap,
+        ]) {
+          snap.docs.forEach(d => writer.delete(d.ref));
         }
 
-        // 6. Query and delete all reports by this user
-        const reportsSnap = await db.collection("reports").where("reporterId", "==", userId).get();
-        for (const rDoc of reportsSnap.docs) {
-          await rDoc.ref.delete().catch(() => {});
-        }
-
-        // 7. Query and delete all notifications for this user
-        const notificationsSnap = await db.collection("notifications").where("userId", "==", userId).get();
-        for (const nDoc of notificationsSnap.docs) {
-          await nDoc.ref.delete().catch(() => {});
-        }
-
-        // 8. Query and delete all invites created by or used by this user
-        const invitesCreatedSnap = await db.collection("invites").where("createdBy", "==", userId).get();
-        for (const iDoc of invitesCreatedSnap.docs) {
-          await iDoc.ref.delete().catch(() => {});
-        }
-        const invitesUsedSnap = await db.collection("invites").where("usedBy", "==", userId).get();
-        for (const iDoc of invitesUsedSnap.docs) {
-          await iDoc.ref.delete().catch(() => {});
-        }
-
-        // 9. Query and delete all chats involving this user (including messages subcollection)
-        const chatsSnap = await db.collection("chats").where("participants", "array-contains", userId).get();
-        for (const chatDoc of chatsSnap.docs) {
-          const messagesSnap = await chatDoc.ref.collection("messages").get();
-          for (const msgDoc of messagesSnap.docs) {
-            await msgDoc.ref.delete().catch(() => {});
-          }
-          await chatDoc.ref.delete().catch(e => console.error("Error deleting chat:", chatDoc.id, e));
-        }
-
-        // 10. Circle memberships: remove member and decrement count
+        // Private doc + circle memberships. memberCount/privacy maintenance
+        // now happens in the onCircleMemberDeleted trigger (social.ts) — the
+        // old manual decrement here would double-count against it.
+        writer.delete(db.collection("users_private").doc(userId));
         const joinedCircles: string[] = before.joinedCircles || [];
         for (const circleId of joinedCircles) {
-          await db.collection("circles").doc(circleId).collection("members").doc(userId).delete().catch(() => {});
-          await db.collection("circles").doc(circleId).update({
-            memberCount: admin.firestore.FieldValue.increment(-1)
-          }).catch(() => {});
+          writer.delete(db.collection("circles").doc(circleId).collection("members").doc(userId));
         }
+
+        await writer.close();
+
+        // ── Phase C: documents with subcollections via recursiveDelete —
+        // also covers thread replies (messages/*/replies), which the old
+        // per-collection loop silently missed ──
+        await Promise.all(itemsSnap.docs.map(d =>
+          db.recursiveDelete(d.ref).catch(e => console.error("Error deleting item tree:", d.id, e))
+        ));
+        await Promise.all(chatsSnap.docs.map(d =>
+          db.recursiveDelete(d.ref).catch(e => console.error("Error deleting chat tree:", d.id, e))
+        ));
 
         // 11. Delete Storage media
         try {

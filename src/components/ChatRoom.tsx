@@ -36,6 +36,7 @@
  */
 import React, { useState, useEffect, useRef } from 'react';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { fetchUserDocsByIds } from '../lib/batchFetch';
 import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, doc, updateDoc, getDoc, arrayUnion, arrayRemove, setDoc } from 'firebase/firestore';
 import { useAuth } from '../hooks/useAuth';
 import { Message, Item, Chat, UserProfile, Circle } from '../types';
@@ -417,37 +418,35 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
 
 
   const [userCache, setUserCache] = useState<Record<string, string>>({});
+  // Read the cache through a ref so this effect doesn't depend on (and thus
+  // re-trigger on) its own writes — the old [.., userCache] dependency caused
+  // cascading duplicate fetches while lookups were in flight.
+  const userCacheRef = useRef(userCache);
+  userCacheRef.current = userCache;
 
   useEffect(() => {
     const missingUids = new Set<string>();
-    messages.forEach(msg => {
-      if (!msg.senderName && msg.senderId && !userCache[msg.senderId]) {
-        missingUids.add(msg.senderId);
-      }
-    });
-    threadMessages.forEach(msg => {
-      if (!msg.senderName && msg.senderId && !userCache[msg.senderId]) {
+    [...messages, ...threadMessages].forEach(msg => {
+      if (!msg.senderName && msg.senderId && !userCacheRef.current[msg.senderId]) {
         missingUids.add(msg.senderId);
       }
     });
 
     if (missingUids.size === 0) return;
 
-    missingUids.forEach(async (uid) => {
-      try {
-        const userSnap = await getDoc(doc(db, 'users', uid));
-        if (userSnap.exists()) {
-          const data = userSnap.data();
-          setUserCache(prev => ({
-            ...prev,
-            [uid]: data.displayName || 'Neighbor'
-          }));
-        }
-      } catch (err) {
-        console.error("Error fetching user name for message:", err);
-      }
-    });
-  }, [messages, threadMessages, userCache]);
+    // Batched: one chunked 'in' query for all missing senders, one state
+    // merge — instead of a getDoc + setState per sender (the old N+1).
+    fetchUserDocsByIds([...missingUids])
+      .then(profiles => {
+        const additions: Record<string, string> = {};
+        missingUids.forEach(uid => {
+          // Cache deleted senders as 'Neighbor' too, so they're never refetched.
+          additions[uid] = profiles.get(uid)?.displayName || 'Neighbor';
+        });
+        setUserCache(prev => ({ ...prev, ...additions }));
+      })
+      .catch(err => console.error("Error fetching sender names:", err));
+  }, [messages, threadMessages]);
 
   useEffect(() => {
     if (!item?.id || !user?.uid) {

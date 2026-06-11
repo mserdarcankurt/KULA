@@ -10,9 +10,17 @@ interface TrustNode {
   neighborhoodVisibility?: string;
 }
 
+/**
+ * The graph STRUCTURE only needs two things: vouch edges (from/to pairs)
+ * and host edges (each user's hostId). Both queries below are field-masked
+ * with select(), so memory and bandwidth stay tiny even as the community
+ * grows — the old version loaded EVERY FIELD of EVERY user doc into the
+ * function instance. Full profiles are hydrated separately (fetchProfiles)
+ * only for the handful of nodes that actually appear in a response.
+ */
 let globalAdjacencyCache: {
-  userMap: Map<string, any>;
   adjacency: Map<string, Set<string>>;
+  hostMap: Map<string, string | undefined>;
 } | null = null;
 let lastAdjacencyUpdate = 0;
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -23,13 +31,14 @@ async function buildGlobalAdjacency(db: FirebaseFirestore.Firestore) {
   }
 
   const [usersSnap, vouchesSnap] = await Promise.all([
-    db.collection('users').get(),
-    db.collection('vouches').where('status', '==', 'ACCEPTED').get()
+    db.collection('users').select('hostId').get(),
+    db.collection('vouches').where('status', '==', 'ACCEPTED').select('fromUserId', 'toUserId').get()
   ]);
 
-  const userMap = new Map<string, any>();
+  // uid → hostId (undefined when none). Keys double as the existing-user set.
+  const hostMap = new Map<string, string | undefined>();
   usersSnap.forEach(doc => {
-    userMap.set(doc.id, { id: doc.id, ...doc.data() });
+    hostMap.set(doc.id, doc.get('hostId') || undefined);
   });
 
   const adjacency = new Map<string, Set<string>>();
@@ -40,23 +49,43 @@ async function buildGlobalAdjacency(db: FirebaseFirestore.Firestore) {
     adjacency.get(b)!.add(a);
   };
 
-  userMap.forEach((profile, uid) => {
-    if (profile.hostId && userMap.has(profile.hostId)) {
-      addEdge(uid, profile.hostId);
+  hostMap.forEach((hostId, uid) => {
+    if (hostId && hostMap.has(hostId)) {
+      addEdge(uid, hostId);
     }
   });
 
   vouchesSnap.forEach(doc => {
     const v = doc.data();
-    if (userMap.has(v.fromUserId) && userMap.has(v.toUserId)) {
+    if (hostMap.has(v.fromUserId) && hostMap.has(v.toUserId)) {
       addEdge(v.fromUserId, v.toUserId);
     }
   });
 
-  const result = { userMap, adjacency };
+  const result = { adjacency, hostMap };
   globalAdjacencyCache = result;
   lastAdjacencyUpdate = Date.now();
   return result;
+}
+
+/** Hydrate full profile docs for ONLY the uids that appear in a response. */
+async function fetchProfiles(
+  db: FirebaseFirestore.Firestore,
+  uids: Iterable<string>
+): Promise<Map<string, any>> {
+  const unique = [...new Set(uids)];
+  const profiles = new Map<string, any>();
+  if (unique.length === 0) return profiles;
+
+  const CHUNK = 100;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const refs = unique.slice(i, i + CHUNK).map(uid => db.collection('users').doc(uid));
+    const snaps = await db.getAll(...refs);
+    snaps.forEach(snap => {
+      if (snap.exists) profiles.set(snap.id, snap.data());
+    });
+  }
+  return profiles;
 }
 
 export const getNetworkDistances = onCall(async (request) => {
@@ -115,7 +144,7 @@ export const getTrustPath = onCall(async (request) => {
     return { degrees: 0, chain: [], via: undefined };
   }
   
-  const { userMap, adjacency } = await buildGlobalAdjacency(db);
+  const { adjacency } = await buildGlobalAdjacency(db);
 
   const queue: { uid: string; path: string[] }[] = [{ uid: callerUid, path: [callerUid] }];
   const visited = new Set<string>([callerUid]);
@@ -132,11 +161,13 @@ export const getTrustPath = onCall(async (request) => {
     for (const neighborId of neighbors) {
       if (neighborId === targetUid) {
         const fullPathIds = [...path, neighborId];
+        // Hydrate full profiles only for the few nodes on the found path.
+        const pathProfiles = await fetchProfiles(db, fullPathIds);
         const fullChain: TrustNode[] = [];
 
         for (let i = 0; i < fullPathIds.length; i++) {
           const id = fullPathIds[i];
-          const nData = userMap.get(id);
+          const nData = pathProfiles.get(id);
           if (nData) {
             const isIntermediate = i > 0 && i < fullPathIds.length - 1;
             const hideAsConnector = !!nData.privacySettings?.hideAsConnector;
@@ -181,12 +212,10 @@ export const getNetworkGraph = onCall(async (request) => {
   const maxDepth = Math.min(Math.max(Number(requestedDepth) || 4, 1), 4);
   const db = getDb();
 
-  // 1. Fetch all users and accepted vouches
-  // Note: For a very large scale app, this would need to be replaced with a localized crawl.
-  // For KULA's neighborhood scale, a server-side bulk fetch is extremely fast compared to a client doing it.
-  const { userMap, adjacency } = await buildGlobalAdjacency(db);
+  // 1. Build the graph structure (field-masked: vouch pairs + hostIds only)
+  const { adjacency, hostMap } = await buildGlobalAdjacency(db);
 
-  // 3. BFS to maxDepth
+  // 2. BFS to maxDepth
   const visited = new Map<string, number>();
   const queue: [string, number][] = [[callerUid, 0]];
   visited.set(callerUid, 0);
@@ -205,6 +234,45 @@ export const getNetworkGraph = onCall(async (request) => {
       }
     }
   }
+
+  // 3. Compute lineage IDs from hostMap BEFORE hydrating profiles, so one
+  // batched fetch covers every node the response will contain.
+  const lineageIds = new Set<string>();
+  lineageIds.add(callerUid);
+
+  let currentHost = hostMap.get(callerUid);
+  for (let i = 0; i < 2; i++) {
+    if (currentHost && hostMap.has(currentHost)) {
+      lineageIds.add(currentHost);
+      currentHost = hostMap.get(currentHost);
+    } else {
+      break;
+    }
+  }
+
+  const hostToGuests = new Map<string, string[]>();
+  hostMap.forEach((hostId, uid) => {
+    if (hostId) {
+      if (!hostToGuests.has(hostId)) hostToGuests.set(hostId, []);
+      hostToGuests.get(hostId)!.push(uid);
+    }
+  });
+
+  const downQueue: [string, number][] = [[callerUid, 0]];
+  while (downQueue.length > 0) {
+    const [curr, depth] = downQueue.shift()!;
+    if (depth >= 3) continue;
+    const guests = hostToGuests.get(curr);
+    if (guests) {
+      for (const g of guests) {
+        lineageIds.add(g);
+        downQueue.push([g, depth + 1]);
+      }
+    }
+  }
+
+  // 4. Hydrate full profiles ONLY for nodes in the response (visited ∪ lineage)
+  const userMap = await fetchProfiles(db, [...visited.keys(), ...lineageIds]);
 
   // Helper to normalize coordinates
   const safeCoords = (loc: any) => {
@@ -234,26 +302,25 @@ export const getNetworkGraph = onCall(async (request) => {
     });
   }
 
-  // 5. Build Links
+  // 5. Build Links (host edges come from hostMap — INVITE beats VOUCH)
   const visibleIds = new Set(visited.keys());
   const links: any[] = [];
   const linkSet = new Set<string>();
 
-  userMap.forEach((profile, uid) => {
+  hostMap.forEach((hostId, uid) => {
     if (visibleIds.has(uid)) {
-      if (profile?.hostId && visibleIds.has(profile.hostId)) {
-        const key = [uid, profile.hostId].sort().join('::');
+      if (hostId && visibleIds.has(hostId)) {
+        const key = [uid, hostId].sort().join('::');
         if (!linkSet.has(key)) {
           linkSet.add(key);
-          links.push({ source: profile.hostId, target: uid, type: 'INVITE' });
+          links.push({ source: hostId, target: uid, type: 'INVITE' });
         }
       }
     }
   });
 
-  // Since we don't have vouchesSnap directly, we can iterate over adjacency
-  // However, adjacency includes both invite and vouch edges. 
-  // We can just add all visible edges as VOUCH if they aren't already INVITE.
+  // Adjacency includes both invite and vouch edges; any visible edge not
+  // already added as INVITE is a VOUCH edge.
   for (const uid of visibleIds) {
     const neighbors = adjacency.get(uid);
     if (neighbors) {
@@ -269,41 +336,7 @@ export const getNetworkGraph = onCall(async (request) => {
     }
   }
 
-  // 6. Compute Lineage
-  const lineageIds = new Set<string>();
-  lineageIds.add(callerUid);
-
-  let currentHost = userMap.get(callerUid)?.hostId;
-  for (let i = 0; i < 2; i++) {
-    if (currentHost && userMap.has(currentHost)) {
-      lineageIds.add(currentHost);
-      currentHost = userMap.get(currentHost)?.hostId;
-    } else {
-      break;
-    }
-  }
-
-  const downQueue: [string, number][] = [[callerUid, 0]];
-  const hostToGuests = new Map<string, string[]>();
-  userMap.forEach((p, uid) => {
-    if (p.hostId) {
-      if (!hostToGuests.has(p.hostId)) hostToGuests.set(p.hostId, []);
-      hostToGuests.get(p.hostId)!.push(uid);
-    }
-  });
-
-  while (downQueue.length > 0) {
-    const [curr, depth] = downQueue.shift()!;
-    if (depth >= 3) continue;
-    const guests = hostToGuests.get(curr);
-    if (guests) {
-      for (const g of guests) {
-        lineageIds.add(g);
-        downQueue.push([g, depth + 1]);
-      }
-    }
-  }
-
+  // 6. Lineage nodes (IDs were computed before hydration in step 3)
   for (const lid of lineageIds) {
     if (!visited.has(lid)) {
       const profile = userMap.get(lid);

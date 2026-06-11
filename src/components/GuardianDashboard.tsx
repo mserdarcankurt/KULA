@@ -27,8 +27,8 @@ import {
   Clock, 
   ChevronRight 
 } from 'lucide-react';
-import { collection, collectionGroup, getDocs, query, where } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '../lib/firebase';
 
 interface GuardianLog {
   id: string;
@@ -135,95 +135,37 @@ export default function GuardianDashboard() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Fetch Firestore Stats
+  // Fetch stats from the admin-gated getGuardianStats Cloud Function.
+  // All aggregation happens server-side with field-masked queries — the
+  // dashboard no longer downloads every user/vouch/note/comment document.
   useEffect(() => {
     async function fetchStats() {
       try {
-        const usersSnap = await getDocs(collection(db, 'users'));
-        if (usersSnap.empty || usersSnap.size < 3) {
+        const getStats = httpsCallable<void, {
+          totalUsers: number;
+          onboardingFunnel: AnalyticsData['onboardingFunnel'];
+          milestones: AnalyticsData['milestones'];
+        }>(functions, 'getGuardianStats');
+        const { data } = await getStats();
+
+        if (data.totalUsers < 3) {
           // Keep mock data if database is fresh/empty
           return;
         }
 
-        const users = usersSnap.docs.map(doc => doc.data());
-        const totalUsersCount = users.length;
-
-        const countStep = (steps: string[]) => {
-          return users.filter(u => {
-            const step = u.onboardingStep;
-            if (!step) return false;
-            return steps.includes(step) || u.hasCompletedOnboarding;
-          }).length;
-        };
-
-        const signup = totalUsersCount;
-        const philosophy = countStep(['PHILOSOPHY', 'HOWTO', 'CIRCLES', 'PROFILE', 'FIRST_ACT', 'COMPLETE']);
-        const howto = countStep(['HOWTO', 'CIRCLES', 'PROFILE', 'FIRST_ACT', 'COMPLETE']);
-        const circles = countStep(['CIRCLES', 'PROFILE', 'FIRST_ACT', 'COMPLETE']);
-        const profileCount = countStep(['PROFILE', 'FIRST_ACT', 'COMPLETE']);
-        const firstAct = countStep(['FIRST_ACT', 'COMPLETE']);
-        const complete = users.filter(u => u.onboardingStep === 'COMPLETE' || u.hasCompletedOnboarding === true).length;
-
-        // Query Connected Neighbors (ACCEPTED Vouches)
-        const vouchesSnap = await getDocs(query(collection(db, 'vouches'), where('status', '==', 'ACCEPTED')));
-        const connectedUids = new Set<string>();
-        vouchesSnap.docs.forEach(d => {
-          const data = d.data();
-          if (data.fromUserId) connectedUids.add(data.fromUserId);
-          if (data.toUserId) connectedUids.add(data.toUserId);
-        });
-
-        // Query Reciprocal Exchange (Gratitude Notes)
-        const gratitudeSnap = await getDocs(collection(db, 'gratitude_notes'));
-        const exchangedUids = new Set<string>();
-        gratitudeSnap.docs.forEach(d => {
-          const data = d.data();
-          if (data.fromUserId) exchangedUids.add(data.fromUserId);
-          if (data.toUserId) exchangedUids.add(data.toUserId);
-        });
-
-        // Query Active Dialogue (Comments across items subcollections)
-        const commentsSnap = await getDocs(collectionGroup(db, 'comments'));
-        const commentedUids = new Set<string>();
-        commentsSnap.docs.forEach(d => {
-          const data = d.data();
-          if (data.userId) commentedUids.add(data.userId);
-        });
-
-        // Compute aggregate overall activation (any milestone achieved)
-        let anyCount = 0;
-        usersSnap.docs.forEach(d => {
-          const uid = d.id;
-          if (connectedUids.has(uid) || exchangedUids.has(uid) || commentedUids.has(uid)) {
-            anyCount++;
-          }
-        });
-
         setAnalyticsData({
-          totalUsers: totalUsersCount,
-          onboardingFunnel: {
-            signup,
-            philosophy,
-            howto,
-            circles,
-            profile: profileCount,
-            firstAct,
-            complete
-          },
-          milestones: {
-            connected: usersSnap.docs.filter(d => connectedUids.has(d.id)).length,
-            exchanged: usersSnap.docs.filter(d => exchangedUids.has(d.id)).length,
-            commented: usersSnap.docs.filter(d => commentedUids.has(d.id)).length,
-            any: anyCount
-          },
+          totalUsers: data.totalUsers,
+          onboardingFunnel: data.onboardingFunnel,
+          milestones: data.milestones,
           isUsingMock: false
         });
 
         // Calculate health percentage based on completeness of onboarding and errors
+        const { signup, complete } = data.onboardingFunnel;
         const completionRate = signup > 0 ? (complete / signup) : 1;
         setHealth(Math.round(80 + (completionRate * 20)));
       } catch (err) {
-        console.warn('[Analytics Dashboard] Firestore connection error or missing permissions. Displaying sandbox simulator instead.', err);
+        console.warn('[Analytics Dashboard] Stats function unavailable or missing admin claim. Displaying sandbox simulator instead.', err);
       }
     }
 
