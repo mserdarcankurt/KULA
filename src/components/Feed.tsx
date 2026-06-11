@@ -36,7 +36,7 @@
 import React, { useState, useEffect } from 'react';
 import { useItems } from '../hooks/useItems';
 import { db } from '../lib/firebase';
-import { query, collection, getDocs, updateDoc, doc, arrayUnion, arrayRemove, setDoc, serverTimestamp, getDoc, addDoc, where } from 'firebase/firestore';
+import { query, collection, getDocs, updateDoc, doc, arrayUnion, arrayRemove, setDoc, serverTimestamp, addDoc, where } from 'firebase/firestore';
 import { MapPin, Tag, Users, Globe, Shield, Target, HeartHandshake, Plus, MessageSquare, Clock, Languages, Loader2, Calendar, Coffee, Share, MessageCircle } from 'lucide-react';
 import { Item, Circle } from '../types';
 import { OwnerName } from './OwnerName';
@@ -393,14 +393,7 @@ export function ItemCard({ item, circle, onNavigateToChat, onViewProfile, onClic
       await updateDoc(doc(db, 'users', user.uid), {
         joinedCircles: arrayUnion(circle.id)
       });
-
-      const itemRef = doc(db, 'circles', circle.id);
-      const snap = await getDoc(itemRef);
-      if (snap.exists()) {
-        await updateDoc(itemRef, {
-          memberCount: (snap.data().memberCount || 0) + 1
-        });
-      }
+      // memberCount is maintained server-side by onCircleMemberCreated.
     } catch (err) {
       console.error('Error joining circle:', err);
     } finally {
@@ -443,6 +436,7 @@ export function ItemCard({ item, circle, onNavigateToChat, onViewProfile, onClic
 
       await addDoc(collection(db, 'notifications'), {
         userId: item.ownerId,
+        actorId: profile.uid,
         type: 'MATCH_INTEREST',
         content: `Interest in ${item.type}: ${item.title}`,
         isRead: false,

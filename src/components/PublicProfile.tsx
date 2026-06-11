@@ -224,6 +224,7 @@ export default function PublicProfile({ userId, onClose, onNavigateToChat }: Pub
       const senderName = myProfile?.displayName || 'A neighbor';
       await addDoc(collection(db, 'notifications'), {
         userId: userId,
+        actorId: user.uid,
         type: 'VOUCH_REQUEST',
         content: `${senderName} wants to vouch for you as a trusted neighbor.`,
         isRead: false,
@@ -258,6 +259,7 @@ export default function PublicProfile({ userId, onClose, onNavigateToChat }: Pub
       if (senderUid && senderUid !== user?.uid) {
         await addDoc(collection(db, 'notifications'), {
           userId: senderUid,
+          actorId: user?.uid,
           type: 'VOUCH_ACCEPTED',
           content: `${acceptorName} accepted your vouch! You are now connected neighbors.`,
           isRead: false,

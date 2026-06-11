@@ -16,17 +16,12 @@ import { UserProfile } from '../types';
 import { logEvent } from '../lib/analytics';
 
 /**
- * FOUNDER_UIDS:
- * These UIDs always get isAdmin: true and bypass onboarding.
- * This prevents the founder from getting locked out of their own app
- * after a database reset, seed wipe, or profile corruption.
- * 
- * TODO [POST-ALPHA]: Move this to a Firestore 'admins' collection or
- * Firebase custom claims so it's not hardcoded in the client.
+ * ADMIN STATUS:
+ * Admin is granted via Firebase custom claims (scripts/grant-admin.ts), which
+ * also sets isAdmin: true on the user's profile document for UI gating.
+ * firestore.rules check request.auth.token.admin — the client never decides
+ * who is an admin, and no admin UIDs ship in this bundle.
  */
-const FOUNDER_UIDS = import.meta.env.VITE_FOUNDER_UIDS 
-  ? import.meta.env.VITE_FOUNDER_UIDS.split(',') 
-  : [];
 
 /**
  * AuthContextType:
@@ -158,7 +153,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               * We create a fresh one here with default community settings.
               */
             console.log('[KULA AUTH] New user detected — creating profile...');
-            const isFounder = FOUNDER_UIDS.includes(user.uid) || (import.meta.env.DEV && user.isAnonymous);
             const newProfile: UserProfile = {
               uid: user.uid,
               displayName: user.displayName || 'Anonymous User',
@@ -167,14 +161,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               rating: 0,
               reviewCount: 0,
               createdAt: serverTimestamp(),
-              isAdmin: isFounder,
+              isAdmin: false,
               defaultReach: ['VICINITY'],
-              joinedCircles: isFounder ? ['general'] : [],
-              hasCompletedOnboarding: isFounder,
-              onboardingStep: isFounder ? 'COMPLETE' : null,
-              hasCompletedInteractiveTour: isFounder,
-              hostStatus: isFounder ? 'APPROVED' : 'NONE',
-              ...(isFounder ? { hostId: 'founder', skipIntroAnimation: true } : {})
+              joinedCircles: [],
+              hasCompletedOnboarding: false,
+              onboardingStep: null,
+              hasCompletedInteractiveTour: false,
+              hostStatus: 'NONE'
             };
             const newPrivate = {
               exactHomeLocation: null,
@@ -188,27 +181,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             mergeAndSetProfile();
           } else {
             // If they already have a profile, just load it into state.
+            // (Admin status lives in custom claims + the isAdmin field, both
+            // set server-side via scripts/grant-admin.ts — the client never
+            // writes privilege fields, and firestore.rules would deny it.)
             publicData = profileSnap.data() as UserProfile;
-
-            // FOUNDER SAFETY NET: If a founder's profile somehow lost admin/onboarding status
-            // (e.g., after a seed wipe), auto-repair it.
-            // TODO [POST-ALPHA]: Replace with Firebase custom claims for proper admin management.
-            if (FOUNDER_UIDS.includes(user.uid) && !publicData.isAdmin) {
-              console.warn('[KULA] Founder profile missing admin flag — auto-repairing...');
-              const founderFix: Partial<UserProfile> = {
-                isAdmin: true,
-                hasCompletedOnboarding: true,
-                onboardingStep: 'COMPLETE' as any,
-                hostStatus: 'APPROVED',
-                hostId: publicData.hostId || 'founder',
-                skipIntroAnimation: true,
-              };
-              updateDoc(profileRef, founderFix).catch(err =>
-                console.error('Failed to auto-repair founder profile:', err)
-              );
-              publicData = { ...publicData, ...founderFix };
-            }
-
             mergeAndSetProfile();
           }
         });

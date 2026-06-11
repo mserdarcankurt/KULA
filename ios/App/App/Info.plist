@@ -53,11 +53,13 @@
 	<!-- dialogs when the app requests access to device features. -->
 	<!-- ═══════════════════════════════════════════════════════ -->
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>KULA uses your location to show nearby neighbors and their offers. Your exact location is never shared publicly.</string>
+	<string>KULA uses your location to show nearby neighbors and their offers. Your home location is always blurred to a neighborhood area; sharing your precise live location on a post is optional and clearly labeled.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>KULA uses your camera to take photos of items you want to share with neighbors.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>KULA accesses your photo library to let you pick images for your posts.</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

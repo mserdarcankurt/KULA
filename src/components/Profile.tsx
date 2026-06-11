@@ -45,8 +45,9 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { LogOut, Star, Award, MapPin, Heart, Settings, Tag, Clock, CheckCircle2, Globe, Shield, Target, Sparkles, Languages, X, Users, Instagram, Home, Plus, Trash2, User, Network, EyeOff, AlertTriangle, FileText } from 'lucide-react';
-import { db } from '../lib/firebase';
-import { collection, query, where, onSnapshot, orderBy, writeBatch, serverTimestamp, doc, updateDoc, setDoc, getDocs, getDoc, addDoc, deleteDoc } from 'firebase/firestore';
+import { db, functions } from '../lib/firebase';
+import { httpsCallable } from 'firebase/functions';
+import { collection, query, where, onSnapshot, serverTimestamp, doc, updateDoc, setDoc, getDoc, addDoc, deleteDoc } from 'firebase/firestore';
 import PublicProfile from './PublicProfile';
 import { generateThematicCode, createUniqueInvite } from '../utils/inviteGenerator';
 import { Item, SavedLocation, UserPrivacySettings, TrustPrivacyLevel } from '../types';
@@ -541,10 +542,11 @@ export default function Profile({
     if (!user || !profile) return;
     setUpdatingOrg(true);
     try {
+      // NOTE: isVerified is intentionally NOT set here — verification is an
+      // admin action (firestore.rules deny self-writes to isVerified).
       await updateDoc(doc(db, 'users', user.uid), {
         isOrganization: !profile.isOrganization,
-        orgType: !profile.isOrganization ? 'SHELTER' : null,
-        isVerified: !profile.isOrganization // Auto-verify for prototype
+        orgType: !profile.isOrganization ? 'SHELTER' : null
       });
     } catch (err) {
       console.error('Failed to update org status:', err);
@@ -721,99 +723,28 @@ export default function Profile({
 
     const inviteCodeKey = hostCodeInput.trim().toLowerCase();
 
-    // Support the app store reviewer tester login bypass code
-    if (inviteCodeKey === 'tester') {
-      try {
-        await updateDoc(doc(db, 'users', user.uid), {
-          hostId: 'mock-host-uid',
-          hostStatus: 'APPROVED'
-        });
-        setHostSuccess('Connected with host Alice Neighbor! Onboarding complete.');
-        setHostCodeInput('');
-      } catch (err) {
-        console.error('Failed to apply tester host:', err);
-        setHostError('Failed to apply code.');
-      } finally {
-        setUpdatingHost(false);
-      }
-      return;
-    }
-
     try {
-      // 1. Look up the passcode in the new /invites collection
-      const inviteRef = doc(db, 'invites', inviteCodeKey);
-      const inviteSnap = await getDoc(inviteRef);
+      // Redeem server-side: the applyInviteCode Cloud Function validates the
+      // code, marks it USED, and sets hostId/hostStatus with Admin privileges.
+      // (firestore.rules no longer allow clients to write those fields, and
+      // the old 'tester' bypass + legacy users.inviteCode fallback are gone.)
+      const applyInviteCodeFn = httpsCallable<{ code: string }, { hostId: string }>(functions, 'applyInviteCode');
+      const { data } = await applyInviteCodeFn({ code: inviteCodeKey });
 
-      if (inviteSnap.exists()) {
-        const inviteData = inviteSnap.data();
-        if (inviteData.status !== 'PENDING') {
-          setHostError('This invite code has already been used.');
-          setUpdatingHost(false);
-          return;
-        }
-
-        const hostUid = inviteData.createdBy;
-        if (hostUid === user.uid) {
-          setHostError('You cannot use your own invite code.');
-          setUpdatingHost(false);
-          return;
-        }
-
-        const hostSnap = await getDoc(doc(db, 'users', hostUid));
-        if (!hostSnap.exists()) {
-          setHostError('Host user profile not found.');
-          setUpdatingHost(false);
-          return;
-        }
-
-        const hostData = hostSnap.data();
-
-        // Transaction/Batch to mark code as USED and update bob's profile to hostId / APPROVED
-        const batch = writeBatch(db);
-        batch.update(inviteRef, {
-          status: 'USED',
-          usedBy: user.uid,
-          usedByName: profile?.displayName || user.displayName || 'Anonymous User',
-          usedAt: serverTimestamp()
-        });
-
-        batch.update(doc(db, 'users', user.uid), {
-          hostId: hostUid,
-          hostStatus: 'APPROVED'
-        });
-
-        await batch.commit();
-
-        setHostSuccess(`Connected with host ${inviteData.createdByName || hostData.displayName || 'A neighbor'}!`);
-        setHostCodeInput('');
-        setUpdatingHost(false);
-        return;
-      }
-
-      // 2. Fallback: Search the legacy inviteCode field in the /users collection
-      const legacyQ = query(collection(db, 'users'), where('inviteCode', '==', hostCodeInput.trim().toUpperCase()));
-      const legacySnap = await getDocs(legacyQ);
-
-      if (!legacySnap.empty) {
-        const hostDoc = legacySnap.docs[0];
-        if (hostDoc.id === user.uid) {
-          setHostError('You cannot be your own host.');
-          setUpdatingHost(false);
-          return;
-        }
-
-        await updateDoc(doc(db, 'users', user.uid), {
-          hostId: hostDoc.id,
-          hostStatus: 'APPROVED'
-        });
-        setHostSuccess(`Connected with host ${hostDoc.data().displayName}!`);
-        setHostCodeInput('');
-      } else {
-        setHostError('Invite code not found.');
-      }
-    } catch (err) {
+      const hostSnap = await getDoc(doc(db, 'users', data.hostId));
+      const hostName = hostSnap.exists() ? (hostSnap.data().displayName || 'A neighbor') : 'A neighbor';
+      setHostSuccess(`Connected with host ${hostName}!`);
+      setHostCodeInput('');
+    } catch (err: any) {
       console.error('Failed to set host code:', err);
-      setHostError('Failed to apply code.');
+      const errCode: string = err?.code || '';
+      if (errCode.includes('not-found')) {
+        setHostError('Invite code not found.');
+      } else if (errCode.includes('failed-precondition')) {
+        setHostError(err?.message || 'This invite code cannot be used.');
+      } else {
+        setHostError('Failed to apply code.');
+      }
     } finally {
       setUpdatingHost(false);
     }
@@ -1014,6 +945,7 @@ export default function Profile({
       // Notify sender
       await addDoc(collection(db, 'notifications'), {
         userId: fromUserId,
+        actorId: user?.uid,
         type: 'VOUCH_ACCEPTED',
         content: `${profile.displayName} accepted your vouch! You are now connected neighbors.`,
         isRead: false,

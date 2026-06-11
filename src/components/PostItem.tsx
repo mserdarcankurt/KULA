@@ -630,10 +630,11 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
             <div className="space-y-2">
               <label className="text-[10px] font-black uppercase tracking-widest text-stone-400 ml-2">What is it?</label>
               <input 
-                type="text" 
+                type="text"
                 placeholder="e.g. Garden tools, Fresh cake, Math tutoring..."
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
+                maxLength={80}
                 className="w-full bg-white border-b-2 border-stone-200 px-2 py-4 text-xl serif focus:border-brand outline-none transition-colors"
                 required
               />
@@ -1207,6 +1208,16 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
                 </>
               )}
             </div>
+
+            {/* Privacy disclosure: Live GPS shares precise coordinates, unlike
+                the blurred neighborhood modes. Required for App Store privacy
+                accuracy (matches NSLocationWhenInUseUsageDescription). */}
+            {locationMode === 'CURRENT_GPS' && (
+              <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2 text-center leading-relaxed">
+                Live GPS shares your <span className="font-bold">precise current location</span> with
+                everyone who can see this post. Switch to Neighborhood mode to share only a blurred area.
+              </p>
+            )}
           </div>
         </div>
 

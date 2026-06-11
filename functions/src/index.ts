@@ -7,12 +7,13 @@ import { items2 } from "./seedItems2";
 
 admin.initializeApp();
 
+// SECURITY: The auth bypass below is gated ONLY on FUNCTIONS_EMULATOR, which
+// is set by the Firebase emulator itself and can never be true in a deployed
+// function. Never gate security on NODE_ENV — it can be set accidentally.
 const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true';
-const isDevMode = isEmulator || process.env.NODE_ENV === 'development';
-const databaseId = isDevMode ? '(default)' : 'kulasharingapp';
-const db = getFirestore(databaseId);
+const db = getFirestore(getDatabaseId());
 
-import { BatchManager } from "./utils";
+import { BatchManager, getDatabaseId } from "./utils";
 export const seed = onRequest({ timeoutSeconds: 120, memory: '512MiB' }, async (req, res) => {
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -25,7 +26,9 @@ export const seed = onRequest({ timeoutSeconds: 120, memory: '512MiB' }, async (
 
   try {
     let callerUid: string;
-    if (isDevMode) {
+    if (isEmulator) {
+      // Local emulator only — FUNCTIONS_EMULATOR is set by the emulator
+      // runtime and cannot be true in a deployed function.
       callerUid = req.body?.callerUid || req.body?.userId || 'dev_user';
     } else {
       const authHeader = req.headers.authorization;
@@ -36,9 +39,9 @@ export const seed = onRequest({ timeoutSeconds: 120, memory: '512MiB' }, async (
       const decodedToken = await admin.auth().verifyIdToken(authHeader.split('Bearer ')[1]);
       callerUid = decodedToken.uid;
 
-      // SECURITY: Only admins can invoke the seed endpoint in production
-      const callerProfile = await db.collection('users').doc(callerUid).get();
-      if (!callerProfile.exists || !callerProfile.data()?.isAdmin) {
+      // SECURITY: Only admins (custom claim, set via scripts/grant-admin.ts)
+      // can invoke the seed endpoint in production.
+      if (decodedToken.admin !== true) {
         res.status(403).json({ error: "Forbidden: admin access required" });
         return;
       }
@@ -256,3 +259,5 @@ export { onUserUpdated } from "./users";
 export { onNotificationCreated } from './notifications';
 export { archiveExpiredItems } from './maintenance';
 export { translateText, detectAndTranslateText } from "./gemini";
+export { lookupInvite, applyInviteCode, createInvite } from "./invites";
+export { onCircleMemberCreated, onCircleMemberDeleted, onGratitudeCreated } from "./social";

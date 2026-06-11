@@ -28,7 +28,7 @@
 import React, { useState } from 'react';
 import { X, Send, Heart } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { collection, addDoc, serverTimestamp, doc, updateDoc, increment } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from '../hooks/useAuth';
 import { logEvent } from '../lib/analytics';
 
@@ -67,7 +67,10 @@ export default function GratitudeFlow({
 
     setSubmitting(true);
     try {
-      // Save the gratitude note
+      // Save the gratitude note. itemType rides along so the
+      // onGratitudeCreated trigger (functions/src/social.ts) can update
+      // BOTH parties' trustMosaic counters server-side — clients no longer
+      // write reputation fields (and firestore.rules would deny it).
       await addDoc(collection(db, 'gratitude_notes'), {
         fromUserId: user.uid,
         fromUserName: profile.displayName || 'A neighbor',
@@ -75,6 +78,7 @@ export default function GratitudeFlow({
         toUserId: recipientId,
         itemId,
         itemTitle,
+        itemType: itemType || null,
         text: `${selectedVibe} ${text.trim()}`,
         createdAt: serverTimestamp()
       });
@@ -86,40 +90,8 @@ export default function GratitudeFlow({
         item_type: itemType || null
       });
 
-      // Increment the recipient's exchange count
-      const recipientRef = doc(db, 'users', recipientId);
-      const recipientUpdate: any = {
-        'trustMosaic.completedExchanges': increment(1)
-      };
-      // Per-type counter for the new TrustMosaic display
-      if (itemType === 'ASK') {
-        recipientUpdate['trustMosaic.completedAsks'] = increment(1);
-      } else if (itemType === 'SHARE') {
-        recipientUpdate['trustMosaic.completedShares'] = increment(1);
-      } else if (itemType === 'JOIN' || itemType === 'IMECE' || itemType === 'MISSION') {
-        recipientUpdate['trustMosaic.completedJoins'] = increment(1);
-        if (itemType === 'IMECE') {
-          recipientUpdate['trustMosaic.imeceParticipations'] = increment(1);
-        }
-      }
-      await updateDoc(recipientRef, recipientUpdate);
-
-      // Also increment our own exchange count
-      const myRef = doc(db, 'users', user.uid);
-      const myUpdate: any = {
-        'trustMosaic.completedExchanges': increment(1)
-      };
-      if (itemType === 'ASK') {
-        myUpdate['trustMosaic.completedAsks'] = increment(1);
-      } else if (itemType === 'SHARE') {
-        myUpdate['trustMosaic.completedShares'] = increment(1);
-      } else if (itemType === 'JOIN' || itemType === 'IMECE' || itemType === 'MISSION') {
-        myUpdate['trustMosaic.completedJoins'] = increment(1);
-        if (itemType === 'IMECE') {
-          myUpdate['trustMosaic.imeceParticipations'] = increment(1);
-        }
-      }
-      await updateDoc(myRef, myUpdate);
+      // trustMosaic counters for both parties are incremented server-side
+      // by the onGratitudeCreated trigger.
 
       setDone(true);
       setTimeout(() => {

@@ -8,168 +8,252 @@
 //   Google's servers check these rules FIRST. If the rules say "deny",
 //   the operation fails and firebase.ts → handleFirestoreError() catches it.
 //   These rules run SERVER-SIDE — the user cannot bypass them.
-//
-// CONNECTION TO THE APP:
-//   - useAuth.tsx → setDoc(profileRef, newProfile): checked by the /users/{userId} CREATE rule
-//   - useItems.ts → onSnapshot(query(...)): checked by the /items/{itemId} READ rule
-//   - chatService.ts → addDoc(chatsRef, {...}): checked by the /chats/{chatId} CREATE rule
-//   - ChatRoom.tsx → addDoc(messagesRef, {...}): checked by the /messages/{messageId} CREATE rule
+//   Cloud Functions use the Admin SDK, which BYPASSES these rules entirely;
+//   anything marked "server-only" below is written by functions/src/*.
 //
 // SECURITY LAYERS:
 //   1. isSignedIn(): Most basic check — you must have a Firebase Auth session.
 //   2. isOwner(userId): You can only modify YOUR OWN data.
-//   3. isAdmin(): Admins (set via isAdmin: true in UserProfile) can moderate.
-//   4. resource.data checks: Fine-grained field-level validation.
+//   3. isAdmin(): Custom-claim check (request.auth.token.admin), set via
+//      scripts/grant-admin.ts. Free and instant — no Firestore read.
+//   4. Field-level validation: create/update rules pin authorship fields
+//      (ownerId, senderId, fromUserId, actorId, createdBy) to the caller
+//      and block self-service writes to reputation/privilege fields.
 // ═══════════════════════════════════════════════════════════════
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
     // ─── Helper Functions ─────────────────────────────────
-    // These are reusable checks used throughout the rules below.
 
-    // isSignedIn(): Returns true if the request has a valid Firebase Auth token.
-    // This is the MINIMUM bar — anonymous/unauthenticated access is NEVER allowed.
     function isSignedIn() {
       return request.auth != null;
     }
 
-    // isOwner(userId): Returns true if the logged-in user's UID matches the
-    // document's userId. This prevents User A from editing User B's profile.
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    // isAdmin(): Looks up the requesting user's profile in Firestore and checks
-    // if their `isAdmin` field is true. This is a SERVER-SIDE check — even if
-    // someone hacks the client to show isAdmin: true, this rule re-verifies.
-    // NOTE: This performs an extra Firestore read per request (costs money at scale).
+    // isAdmin(): Reads the custom claim embedded in the auth token.
+    // Set via scripts/grant-admin.ts (Admin SDK setCustomUserClaims).
+    // Unlike the old get()-based check, this costs NO Firestore read.
     function isAdmin() {
-      return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+      return isSignedIn() && request.auth.token.get('admin', false) == true;
+    }
+
+    // Which fields does this write change?
+    function changedKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    // Is the caller a member of the given circle?
+    function isCircleMember(circleId) {
+      return exists(/databases/$(database)/documents/circles/$(circleId)/members/$(request.auth.uid));
+    }
+
+    // Can the caller see this chat document's data?
+    // DIRECT chats: must be a participant.
+    // CHANNEL chats: participants is [] by design — access = circle membership.
+    function canAccessChatData(chat) {
+      return chat.get('participants', []).hasAny([request.auth.uid])
+        || (chat.get('type', 'DIRECT') == 'CHANNEL'
+            && chat.get('circleId', '') != ''
+            && isCircleMember(chat.circleId));
+    }
+
+    // Same check for subcollections (messages/replies), resolving the parent chat.
+    function canAccessChat(chatId) {
+      return isSignedIn()
+        && canAccessChatData(get(/databases/$(database)/documents/chats/$(chatId)).data);
     }
 
     // ─── Users ────────────────────────────────────────────
     // Collection: users/{userId}
-    // Created by: useAuth.tsx (on first login)
-    // Read by: useTrustNetwork.ts, useNetworkGraph.ts, PublicProfile.tsx, etc.
     match /users/{userId} {
-      // READ: Any authenticated user can read ANY profile.
-      // WHY SO OPEN? The trust network (useTrustNetwork.ts) needs to fetch ALL users
-      // to build the graph. Client-side visibility filtering (trustGraph.ts) handles
-      // the privacy layer — this rule just ensures unauthenticated users can't read.
+      // READ: Any authenticated user can read profiles.
+      // The trust network (useTrustNetwork.ts) needs broad node access;
+      // visibility filtering happens client-side (trustGraph.ts).
+      // NOTE: exact coordinates are NOT here — they live in users_private.
       allow read: if isSignedIn();
 
-      // CREATE: You can only create YOUR OWN profile.
-      // This prevents someone from creating a fake profile under another user's UID.
-      allow create: if isOwner(userId);
+      // CREATE: Only your own profile, and you cannot grant yourself
+      // privileges or reputation at birth.
+      allow create: if isOwner(userId)
+        && request.resource.data.get('isAdmin', false) == false
+        && request.resource.data.get('isVerified', false) == false
+        && request.resource.data.get('rating', 0) == 0
+        && request.resource.data.get('reviewCount', 0) == 0
+        && request.resource.data.get('hostStatus', 'NONE') in ['NONE', 'PENDING']
+        && !request.resource.data.keys().hasAny(['trustMosaic', 'hostId']);
 
-      // UPDATE: Owner can update their own profile (except isAdmin),
-      //         OR the host can update ONLY hostStatus on their guest's profile,
-      //         OR an admin can update any profile.
-      //
-      // ⚠️ TODO (POST-ALPHA): Currently the owner CAN write their own hostStatus
-      // because InviteGate.tsx uses client-side Alpha Tester Auto-Approval.
-      // After alpha, migrate invite acceptance to a Cloud Function
-      // (e.g. callable `applyInviteCode`) that validates the code server-side
-      // and sets hostStatus with admin SDK privileges. Then re-add 'hostStatus'
-      // to the owner's blocked fields:
-      //   hasAny(['isAdmin', 'hostStatus', 'isVerified'])
-      allow update: if (
-        (isOwner(userId) && (
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin']) ||
-          userId in ['PNS6UdUMDXb2y37tsPhhaxHBpEM2']
-        )) ||
-        (isSignedIn() && request.auth.uid == resource.data.hostId && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hostStatus'])) ||
-        isAdmin()
-      );
+      // UPDATE:
+      //  - Owner: anything EXCEPT privilege/reputation/host fields.
+      //    (hostId/hostStatus are set server-side by the applyInviteCode
+      //    Cloud Function; trustMosaic by the onGratitudeCreated trigger.)
+      //  - Owner exception: may CLEAR their own host connection
+      //    (Profile → "remove host") — a pure downgrade, never an escalation.
+      //  - Host: may update ONLY hostStatus on their guest's profile
+      //    (approve/decline from the Waiting Room flow).
+      //  - Admin: anything (moderation).
+      allow update: if isAdmin()
+        || (isOwner(userId)
+            && !changedKeys().hasAny(
+                 ['isAdmin', 'isVerified', 'rating', 'reviewCount',
+                  'trustMosaic', 'hostId', 'hostStatus']))
+        || (isOwner(userId)
+            && changedKeys().hasOnly(['hostId', 'hostStatus'])
+            && request.resource.data.get('hostId', null) == null
+            && request.resource.data.get('hostStatus', 'NONE') == 'NONE')
+        || (isSignedIn()
+            && request.auth.uid == resource.data.get('hostId', '')
+            && changedKeys().hasOnly(['hostStatus']));
 
-      // DELETE: Only admins can delete profiles (for banning).
+      // DELETE: Only admins (banning). GDPR self-deletion goes through
+      // DeleteAccountSheet → status:'DELETED' → server-side hard delete.
       allow delete: if isAdmin();
     }
 
-    // ─── Private Users Data ────────────────────────────────
+    // ─── Private User Data ────────────────────────────────
     // Collection: users_private/{userId}
-    // Contains: exactHomeLocation, savedLocations (coordinates)
-    // Read/write by: useAuth.tsx, Profile.tsx
-    // This is strictly restricted so that only the owner can read or write it.
+    // Contains: exactHomeLocation, savedLocations (precise coordinates).
     match /users_private/{userId} {
       allow read, write: if isOwner(userId);
     }
 
-    // ─── Items (Asks, Shares, İmece, Missions, Joins) ─────
+    // ─── Items (Asks, Shares, İmece, Missions, Joins, Flow) ─
     // Collection: items/{itemId}
-    // Created by: PostItem.tsx
-    // Read by: useItems.ts → Explore.tsx, Discovery.tsx
     match /items/{itemId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn();
 
-      // UPDATE: Restricted to owner/admin OR only appending to participants array
+      // CREATE: ownerId is pinned to the caller (no impersonation),
+      // items start ACTIVE with an empty participants list.
+      allow create: if isSignedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.get('status', 'ACTIVE') == 'ACTIVE'
+        && request.resource.data.get('participants', []).size() == 0;
+
+      // UPDATE: owner/admin freely; everyone else may ONLY add or remove
+      // THEMSELVES from the participants array (join/leave an İmece).
       allow update: if isSignedIn() && (
-        resource.data.ownerId == request.auth.uid || 
-        isAdmin() || 
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participants'])
+        resource.data.ownerId == request.auth.uid
+        || isAdmin()
+        || (changedKeys().hasOnly(['participants']) && onlyTogglesSelfParticipation())
       );
-      
-      // DELETE: Only the owner or an admin can delete items.
-      allow delete: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
+
+      allow delete: if isSignedIn()
+        && (resource.data.ownerId == request.auth.uid || isAdmin());
+
+      function onlyTogglesSelfParticipation() {
+        let before = resource.data.get('participants', []).toSet();
+        let after = request.resource.data.get('participants', []).toSet();
+        let added = after.difference(before);
+        let removed = before.difference(after);
+        return (added == [request.auth.uid].toSet() && removed.size() == 0)
+            || (removed == [request.auth.uid].toSet() && added.size() == 0);
+      }
 
       // Comments sub-collection: items/{itemId}/comments/{commentId}
-      // Anyone can read/create. Only the comment author can edit/delete their own.
       match /comments/{commentId} {
         allow read: if isSignedIn();
-        allow create: if isSignedIn();
-        allow update, delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+        // Authorship pinned: you can only comment as yourself.
+        allow create: if isSignedIn()
+          && request.resource.data.userId == request.auth.uid;
+        allow update: if isSignedIn() && resource.data.userId == request.auth.uid;
+        allow delete: if isSignedIn()
+          && (resource.data.userId == request.auth.uid || isAdmin());
       }
     }
 
     // ─── Circles ──────────────────────────────────────────
     // Collection: circles/{circleId}
-    // Created by: Circles.tsx (Create Circle flow)
-    // Read by: Circles.tsx, useItems.ts (for circle-specific item filtering)
     match /circles/{circleId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn();
 
-      // UPDATE: Restricted to creator/admin OR only memberCount updates.
-      allow update: if isSignedIn() && (
-        resource.data.creatorId == request.auth.uid || 
-        isAdmin() || 
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberCount'])
-      );
-      allow delete: if isSignedIn() && (resource.data.creatorId == request.auth.uid || isAdmin());
+      // CREATE: creatorId pinned to caller. memberCount starts at 0 —
+      // the onCircleMemberCreated trigger (functions/src/social.ts)
+      // maintains the count when the creator's member doc is written.
+      allow create: if isSignedIn()
+        && request.resource.data.creatorId == request.auth.uid
+        && request.resource.data.get('memberCount', 0) == 0;
+
+      // UPDATE: creator or admin only. memberCount/privacy maintenance
+      // moved server-side (Admin SDK bypasses rules), so the old
+      // "anyone may write memberCount" exception is gone.
+      allow update: if isSignedIn()
+        && (resource.data.creatorId == request.auth.uid || isAdmin());
+      allow delete: if isSignedIn()
+        && (resource.data.creatorId == request.auth.uid || isAdmin());
 
       // Members sub-collection: circles/{circleId}/members/{memberId}
-      // Users can add themselves (join) and remove themselves (leave).
-      // Admins can remove anyone (kick).
+      // Doc ID == member's UID. You may only join/leave as YOURSELF, and
+      // only PUBLIC ("anyone can join") or HIDDEN ("invite-only" = you know
+      // the circle ID/code) circles allow self-join. PRIVATE circles promise
+      // approval, so self-joins are denied server-side; an approval flow can
+      // later admit members via a Cloud Function (Admin SDK bypasses this).
       match /members/{memberId} {
         allow read: if isSignedIn();
-        allow create: if isSignedIn();
+        allow create: if isOwner(memberId)
+          && get(/databases/$(database)/documents/circles/$(circleId)).data.privacy != 'PRIVATE';
         allow delete: if isSignedIn() && (memberId == request.auth.uid || isAdmin());
       }
     }
 
     // ─── Chats ────────────────────────────────────────────
     // Collection: chats/{chatId}
-    // Created by: chatService.ts → getOrCreateChat()
-    // Read by: ChatsList.tsx, ChatRoom.tsx
+    // DIRECT: 1:1, participants [uidA, uidB].
+    // CHANNEL: circle chat, participants [] — access via circle membership.
     match /chats/{chatId} {
-      allow read: if isSignedIn() && resource.data.participants.hasAny([request.auth.uid]);
-      allow create: if isSignedIn();
-      allow update: if isSignedIn() && resource.data.participants.hasAny([request.auth.uid]);
+      // resource == null: reading a not-yet-existing chat doc must return
+      // "doesn't exist" rather than permission-denied — Circles.openChannel
+      // does getDoc() before creating a channel chat with a deterministic ID.
+      allow read: if isSignedIn()
+        && (resource == null || canAccessChatData(resource.data));
+
+      allow create: if isSignedIn() && (
+        (request.resource.data.get('type', '') == 'DIRECT'
+          && request.resource.data.participants.hasAny([request.auth.uid])
+          && request.resource.data.participants.size() == 2)
+        || (request.resource.data.get('type', '') == 'CHANNEL'
+          && request.resource.data.get('circleId', '') != ''
+          && isCircleMember(request.resource.data.circleId)
+          && request.resource.data.get('participants', []).size() == 0)
+      );
+
+      // UPDATE: members may update preview/read-state fields, but can never
+      // rewrite the membership or identity of the chat itself.
+      allow update: if isSignedIn()
+        && canAccessChatData(resource.data)
+        && !changedKeys().hasAny(['participants', 'type', 'circleId']);
+
       allow delete: if isAdmin();
 
       // Messages sub-collection: chats/{chatId}/messages/{messageId}
       match /messages/{messageId} {
-        allow read, create, update: if isSignedIn() && get(/databases/$(database)/documents/chats/$(chatId)).data.participants.hasAny([request.auth.uid]);
+        allow read: if canAccessChat(chatId);
+        // senderId pinned: you can only send as yourself.
+        allow create: if canAccessChat(chatId)
+          && request.resource.data.senderId == request.auth.uid;
+        // Members may vote on polls, claim urgent needs, and bump thread
+        // counts — but cannot edit each other's message text.
+        allow update: if canAccessChat(chatId)
+          && changedKeys().hasOnly(['poll', 'metadata', 'replyCount']);
         allow delete: if isAdmin();
+
+        // Thread replies: chats/{chatId}/messages/{messageId}/replies/{replyId}
+        // (Previously unmatched by any rule — threads were silently denied.)
+        match /replies/{replyId} {
+          allow read: if canAccessChat(chatId);
+          allow create: if canAccessChat(chatId)
+            && request.resource.data.senderId == request.auth.uid;
+          allow update: if canAccessChat(chatId)
+            && changedKeys().hasOnly(['poll', 'metadata']);
+          allow delete: if isAdmin();
+        }
       }
     }
 
     // ─── Swipes ───────────────────────────────────────────
     // Collection: swipes/{swipeId}
-    // Created by: ItemDetailsSheet.tsx (when user swipes LIKE or PASS)
-    // Read by: Explore.tsx (to avoid showing already-swiped items)
     match /swipes/{swipeId} {
       allow read: if isSignedIn() && resource.data.swiperId == request.auth.uid;
       allow create: if isSignedIn() && request.resource.data.swiperId == request.auth.uid;
@@ -178,66 +262,71 @@ service cloud.firestore {
 
     // ─── Notifications ────────────────────────────────────
     // Collection: notifications/{notifId}
-    // Created by: Cloud Functions (functions/index.ts) — server-side
-    // Read by: useUnreadCount.ts → NotificationsOverlay.tsx
+    // Created client-side by social actions (Feed, PublicProfile, BridgeSheet,
+    // Discovery, lib/notifications.ts); the onNotificationCreated function
+    // sends the push. actorId pins WHO generated the notification, so
+    // "from" identity cannot be forged.
     match /notifications/{notifId} {
-      // READ: You can ONLY read YOUR OWN notifications.
-      // This prevents users from seeing each other's notification history.
       allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow create: if isSignedIn();
-      // UPDATE: You can mark YOUR OWN notifications as read.
-      allow update: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow delete: if isAdmin();
+      allow create: if isSignedIn()
+        && request.resource.data.actorId == request.auth.uid
+        && request.resource.data.userId is string
+        && request.resource.data.get('content', '') is string
+        && request.resource.data.get('content', '').size() <= 500;
+      // Recipients may only flip read-state.
+      allow update: if isSignedIn()
+        && resource.data.userId == request.auth.uid
+        && changedKeys().hasOnly(['isRead']);
+      allow delete: if isSignedIn()
+        && (resource.data.userId == request.auth.uid || isAdmin());
     }
 
     // ─── Gratitude Notes ──────────────────────────────────
     // Collection: gratitude_notes/{noteId}
-    // Created by: GratitudeFlow.tsx (after completing an exchange)
-    // Read by: Profile.tsx (to display received gratitude)
-    // Connection: When created, also updates the recipient's TrustMosaic.completedExchanges
+    // trustMosaic counters are updated by the onGratitudeCreated trigger,
+    // NOT by the client — clients can no longer inflate reputations.
     match /gratitude_notes/{noteId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn();
+      allow create: if isSignedIn()
+        && request.resource.data.fromUserId == request.auth.uid
+        && request.resource.data.toUserId is string
+        && request.resource.data.toUserId != request.auth.uid
+        && request.resource.data.get('text', '').size() <= 1000;
       allow delete: if isAdmin();
     }
 
     // ─── Vouches ──────────────────────────────────────────
     // Collection: vouches/{vouchId}
-    // Created by: PublicProfile.tsx (the "Vouch" button)
-    // Read by: useTrustNetwork.ts (to build HORIZONTAL trust edges)
-    // Connection: ACCEPTED vouches appear as green lines in LineageTree.tsx
+    // The trust graph is built from ACCEPTED vouches, so transitions are
+    // strict: only the RECIPIENT can accept/decline, exactly once,
+    // and only the status field may change. Senders may withdraw (delete).
     match /vouches/{vouchId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.resource.data.fromUserId == request.auth.uid;
-      // UPDATE/DELETE: Either the sender (fromUserId) or recipient (toUserId) can
-      // accept or decline. This enables the "Accept Vouch" flow in PublicProfile.tsx.
-      allow update: if isSignedIn() && (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid);
-      allow delete: if isSignedIn() && (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn()
+        && request.resource.data.fromUserId == request.auth.uid
+        && request.resource.data.toUserId is string
+        && request.resource.data.toUserId != request.auth.uid
+        && request.resource.data.get('status', '') == 'PENDING';
+      allow update: if isSignedIn()
+        && resource.data.toUserId == request.auth.uid
+        && resource.data.status == 'PENDING'
+        && changedKeys().hasOnly(['status'])
+        && request.resource.data.status in ['ACCEPTED', 'DECLINED'];
+      allow delete: if isSignedIn()
+        && (resource.data.fromUserId == request.auth.uid
+            || resource.data.toUserId == request.auth.uid
+            || isAdmin());
     }
 
     // ─── Reviews ──────────────────────────────────────────
-    // Collection: reviews/{reviewId}
-    // Created by: Profile.tsx or ItemDetailsSheet.tsx (after exchange)
-    // Read by: PublicProfile.tsx (to display reviews on someone's profile)
     match /reviews/{reviewId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && request.resource.data.reviewerId == request.auth.uid;
-      // Only the REVIEWER can edit/delete their own review.
       allow update, delete: if isSignedIn() && resource.data.reviewerId == request.auth.uid;
     }
 
     // ─── Reports ───────────────────────────────────────────
-    // Collection: reports/{reportId}
-    // Created by: ReportSheet.tsx (when a user flags content or another user)
-    // Read by: GuardianDashboard.tsx (admin moderation panel)
     // App Store compliance: Apple requires a "Report" mechanism for UGC apps.
-    //
-    // SECURITY:
-    //   - Anyone can CREATE a report (as long as they are the reporterId)
-    //   - Only the REPORTER can READ their own reports (to see pending status)
-    //   - Only ADMINS can read ALL reports (for moderation)
-    //   - Only ADMINS can UPDATE reports (to change status: PENDING → RESOLVED)
-    //   - Only ADMINS can DELETE reports
     match /reports/{reportId} {
       allow read: if isSignedIn() && (resource.data.reporterId == request.auth.uid || isAdmin());
       allow create: if isSignedIn() && request.resource.data.reporterId == request.auth.uid;
@@ -247,22 +336,27 @@ service cloud.firestore {
 
     // ─── Invites ──────────────────────────────────────────
     // Collection: invites/{code}
-    // Created by: Profile.tsx (Invite Drawer)
-    // Read by: InviteGate.tsx, Profile.tsx
-    // Connection: One-time consumable codes.
+    // The full lifecycle is server-side (functions/src/invites.ts):
+    // createInvite writes codes, lookupInvite resolves them, applyInviteCode
+    // redeems them. Clients can only LIST their own codes — so codes cannot
+    // be enumerated, probed for existence, or forged.
     match /invites/{code} {
-      allow read: if true; // Any visitor can read invite details to see who invited them
-      allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid && !exists(/databases/$(database)/documents/invites/$(code));
-      allow update: if isSignedIn() && (
-        (resource.data.status == 'PENDING' && request.resource.data.status == 'USED' && request.resource.data.usedBy == request.auth.uid) ||
-        (resource.data.createdBy == request.auth.uid && request.resource.data.status == 'EXPIRED')
-      );
-      allow delete: if isSignedIn() && (resource.data.createdBy == request.auth.uid || isAdmin());
+      // Creators see their own invites (Profile invite manager); admins see all.
+      allow read: if isSignedIn()
+        && (resource.data.createdBy == request.auth.uid || isAdmin());
+      // Creation/redemption are Cloud Function (Admin SDK) only.
+      allow create: if false;
+      // Creators may expire their own un-used codes; redemption is server-side.
+      allow update: if isSignedIn()
+        && resource.data.createdBy == request.auth.uid
+        && changedKeys().hasOnly(['status'])
+        && request.resource.data.status == 'EXPIRED';
+      allow delete: if isSignedIn()
+        && (resource.data.createdBy == request.auth.uid || isAdmin());
     }
 
     // ─── Test Connection Doc ──────────────────────────────
     // Used by: firebase.ts → testConnection() at boot time.
-    // This document may not actually exist — the test just checks if Firestore responds.
     match /test/{docId} {
       allow read: if isSignedIn();
     }

@@ -816,19 +816,14 @@ export default function ChatRoom({ chatId, onAction }: { chatId: string, onActio
       await updateDoc(doc(db, 'users', user.uid), {
         joinedCircles: arrayUnion(circleId)
       });
-
-      const circleRef = doc(db, 'circles', circleId);
-      const circleSnap = await getDoc(circleRef);
-      if (circleSnap.exists()) {
-        await updateDoc(circleRef, {
-          memberCount: (circleSnap.data().memberCount || 0) + 1
-        });
-      }
+      // memberCount is maintained server-side by onCircleMemberCreated.
 
       const systemMessageText = `${profile?.displayName || 'Neighbor'} joined the circle "${circleName}"!`;
+      // senderId must be the real author (firestore.rules pin authorship);
+      // the SYSTEM type controls rendering, not the senderId.
       await addDoc(collection(db, 'chats', chatId, 'messages'), {
         chatId,
-        senderId: 'system',
+        senderId: user.uid,
         senderName: 'System',
         text: systemMessageText,
         type: 'SYSTEM',

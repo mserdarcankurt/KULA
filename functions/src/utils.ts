@@ -1,11 +1,17 @@
 import * as admin from "firebase-admin";
 import { getFirestore } from "firebase-admin/firestore";
 
+// Single source of truth for which Firestore database the functions target.
+// Emulator → '(default)', everything else → 'kulasharingapp'.
+// Deliberately gated ONLY on FUNCTIONS_EMULATOR (set by the emulator runtime
+// itself): a stray NODE_ENV=development in a deploy shell must never silently
+// bind triggers to the wrong database.
+export function getDatabaseId(): string {
+  return process.env.FUNCTIONS_EMULATOR === 'true' ? '(default)' : 'kulasharingapp';
+}
+
 export function getDb() {
-  const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true';
-  const isDevMode = isEmulator || process.env.NODE_ENV === 'development';
-  const databaseId = isDevMode ? '(default)' : 'kulasharingapp';
-  return getFirestore(databaseId);
+  return getFirestore(getDatabaseId());
 }
 
 export class BatchManager {

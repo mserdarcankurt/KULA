@@ -15,13 +15,28 @@
 import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../hooks/useAuth';
-import { db } from '../lib/firebase';
-import { doc, getDoc, writeBatch, serverTimestamp } from 'firebase/firestore';
+import { functions } from '../lib/firebase';
+import { httpsCallable } from 'firebase/functions';
 import { KeyRound, ArrowRight, LogOut, Heart } from 'lucide-react';
 import { logEvent } from '../lib/analytics';
 
+/**
+ * Server-side invite flow (functions/src/invites.ts):
+ *  - lookupInvite validates the code and returns the host preview without
+ *    exposing the invites collection to client reads.
+ *  - applyInviteCode marks the code USED and sets hostId/hostStatus with
+ *    Admin SDK privileges (clients can no longer write those fields).
+ * Reviewer/demo access: a `reusable: true` invite doc (created server-side)
+ * can be redeemed repeatedly — no hardcoded backdoor in the bundle.
+ */
+const lookupInviteFn = httpsCallable<
+  { code: string },
+  { host: { uid: string; name: string; photo: string | null; joinedAtMillis: number | null; helpedCount: number } }
+>(functions, 'lookupInvite');
+const applyInviteCodeFn = httpsCallable<{ code: string }, { hostId: string }>(functions, 'applyInviteCode');
+
 export default function InviteGate() {
-  const { user, profile, logout, updateProfile } = useAuth();
+  const { user, profile, logout } = useAuth();
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -41,7 +56,7 @@ export default function InviteGate() {
   };
 
   /**
-   * PHASE 1: Look up the invite code in Firestore.
+   * PHASE 1: Look up the invite code via the lookupInvite Cloud Function.
    */
   const handleLookup = async () => {
     if (!code.trim() || !user) return;
@@ -49,99 +64,46 @@ export default function InviteGate() {
     setError('');
     setResolvedHost(null);
 
-    const inviteCodeKey = code.trim().toLowerCase();
-
-    if (inviteCodeKey === 'tester') {
-      setResolvedHost({
-        uid: 'mock-host-uid',
-        name: 'Alice Neighbor',
-        photo: 'https://api.dicebear.com/7.x/avataaars/svg?seed=alice',
-        joinedDateStr: 'January 2026',
-        helpedCount: 15,
-      });
-      setLoading(false);
-      return;
-    }
-
     try {
-      const inviteRef = doc(db, 'invites', inviteCodeKey);
-      const inviteSnap = await getDoc(inviteRef);
-
-      if (!inviteSnap.exists()) {
-        setError('This invite code is invalid. Double-check and try again.');
-        setLoading(false);
-        return;
-      }
-
-      const inviteData = inviteSnap.data();
-      if (inviteData.status !== 'PENDING') {
-        setError('This invite code has already been used.');
-        setLoading(false);
-        return;
-      }
-
-      const hostUid = inviteData.createdBy;
-      const hostSnap = await getDoc(doc(db, 'users', hostUid));
-      if (!hostSnap.exists()) {
-        setError('Neighbor host profile not found.');
-        setLoading(false);
-        return;
-      }
-
-      const hostData = hostSnap.data();
-      const hostCreatedAt = hostData.createdAt?.toDate ? hostData.createdAt.toDate() : new Date();
-      const joinedDateStr = hostCreatedAt.toLocaleDateString('en-US', {
-        month: 'long',
-        year: 'numeric',
-      });
-      const helpedCount = hostData.trustMosaic?.completedExchanges || 0;
+      const { data } = await lookupInviteFn({ code: code.trim().toLowerCase() });
+      const host = data.host;
+      const joinedDateStr = host.joinedAtMillis
+        ? new Date(host.joinedAtMillis).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+        : 'recently';
 
       setResolvedHost({
-        uid: hostUid,
-        name: inviteData.createdByName || hostData.displayName || 'A neighbor',
-        photo: inviteData.createdByPhoto || hostData.photoURL || null,
+        uid: host.uid,
+        name: host.name,
+        photo: host.photo,
         joinedDateStr,
-        helpedCount,
+        helpedCount: host.helpedCount,
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error('Invite lookup failed:', err);
-      setError('Something went wrong. Please try again.');
+      const errCode: string = err?.code || '';
+      if (errCode.includes('not-found')) {
+        setError('This invite code is invalid. Double-check and try again.');
+      } else if (errCode.includes('failed-precondition')) {
+        setError('This invite code has already been used.');
+      } else {
+        setError('Something went wrong. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
   };
 
   /**
-   * PHASE 2: Confirm host and transition step to 'PHILOSOPHY'
+   * PHASE 2: Redeem the code server-side. The applyInviteCode function
+   * atomically marks the invite USED and sets hostId/hostStatus/onboardingStep
+   * on this profile — the onSnapshot in useAuth picks the change up live.
    */
   const handleConfirm = async () => {
     if (!resolvedHost || !user || !profile) return;
     setLoading(true);
 
     try {
-      const inviteCodeKey = code.trim().toLowerCase();
-      const batch = writeBatch(db);
-
-      // 1. For real invites, update the status of the invite code to USED
-      if (inviteCodeKey !== 'tester') {
-        const inviteRef = doc(db, 'invites', inviteCodeKey);
-        batch.update(inviteRef, {
-          status: 'USED',
-          usedBy: user.uid,
-          usedByName: profile.displayName || user.displayName || 'Anonymous User',
-          usedAt: serverTimestamp()
-        });
-      }
-
-      // 2. Set Bob's host and approve his onboarding status
-      const userRef = doc(db, 'users', user.uid);
-      batch.update(userRef, {
-        hostId: resolvedHost.uid,
-        hostStatus: 'APPROVED',
-        onboardingStep: 'PHILOSOPHY'
-      });
-
-      await batch.commit();
+      await applyInviteCodeFn({ code: code.trim().toLowerCase() });
       logEvent('onboarding_step_reached', { step: 'PHILOSOPHY' });
     } catch (err) {
       console.error('Failed to accept invitation:', err);

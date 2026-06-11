@@ -1,10 +1,8 @@
 import { onDocumentUpdated } from "firebase-functions/v2/firestore";
-import { BatchManager, getDb } from "./utils";
+import { BatchManager, getDb, getDatabaseId } from "./utils";
 import * as admin from "firebase-admin";
 
-const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true';
-const isDevMode = isEmulator || process.env.NODE_ENV === 'development';
-const databaseId = isDevMode ? '(default)' : 'kulasharingapp';
+const databaseId = getDatabaseId();
 
 export const onUserUpdated = onDocumentUpdated(
   {

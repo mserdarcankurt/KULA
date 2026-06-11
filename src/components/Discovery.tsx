@@ -44,7 +44,7 @@ import { motion, AnimatePresence, useMotionValue, useTransform } from 'motion/re
 import { X, Heart, MapPin, Tag, Map as MapIcon, Layers, Globe, Users, Clock, Shield, Languages, Loader2, Zap, Send, Share2, Copy, MessageCircle } from 'lucide-react';
 import { useItems } from '../hooks/useItems';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, addDoc, serverTimestamp, query, where, onSnapshot, getDoc, doc, updateDoc, documentId, getDocs, setDoc, arrayUnion } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, query, where, onSnapshot, doc, updateDoc, documentId, getDocs, setDoc, arrayUnion } from 'firebase/firestore';
 import { getOrCreateChat } from '../services/chatService';
 import { useAuth } from '../hooks/useAuth';
 import { Item } from '../types';
@@ -356,14 +356,7 @@ export default function Discovery({ location, circleId, onNavigateToChat, onNavi
           await updateDoc(doc(db, 'users', user.uid), {
             joinedCircles: arrayUnion(currentItem.id)
           });
-
-          const circleRef = doc(db, 'circles', currentItem.id);
-          const circleSnap = await getDoc(circleRef);
-          if (circleSnap.exists()) {
-            await updateDoc(circleRef, {
-              memberCount: (circleSnap.data().memberCount || 0) + 1
-            });
-          }
+          // memberCount is maintained server-side by onCircleMemberCreated.
 
           // Automatically open the circle space after joining
           if (onNavigateToCircle) {
@@ -387,6 +380,7 @@ export default function Discovery({ location, circleId, onNavigateToChat, onNavi
           console.log("Adding notification...");
           await addDoc(collection(db, 'notifications'), {
             userId: currentItem.ownerId,
+            actorId: user.uid,
             type: 'MATCH_INTEREST',
             content: `Someone is interested in your ${
               currentItem.type === 'ASK' ? 'need' : 

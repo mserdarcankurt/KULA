@@ -145,6 +145,7 @@ export default function BridgeSheet({ item, onClose, onBridged }: BridgeSheetPro
 
         await addDoc(collection(db, 'notifications'), {
           userId: item.ownerId,
+          actorId: user.uid,
           type: 'ITEM_BRIDGED',
           content: `Your ${item.type.toLowerCase()} was shared with circle "${bridgeTarget.targetName}"!`,
           isRead: false,
@@ -177,6 +178,7 @@ export default function BridgeSheet({ item, onClose, onBridged }: BridgeSheetPro
         
         await addDoc(collection(db, 'notifications'), {
           userId: item.ownerId,
+          actorId: user.uid,
           type: 'ITEM_BRIDGED',
           content: `Your ${item.type.toLowerCase()} was shared with ${bridgeTarget.targetName}!`,
           isRead: false,

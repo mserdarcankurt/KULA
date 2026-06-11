@@ -1,15 +1,23 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    match /items/{allPaths=**} {
-      // Allow read access to anyone (public sharing app)
-      allow read: if true;
-      // Allow write access only to authenticated users
-      allow write: if request.auth != null;
+    // Item media: items/uploads/{ownerUid}/<file>
+    // The ONLY client upload path (PostItem.tsx). Owners manage their own
+    // folder; any signed-in user can read (item photos are shown in the feed,
+    // and existing getDownloadURL token links keep working regardless).
+    match /items/uploads/{userId}/{allPaths=**} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null
+                            && request.auth.uid == userId
+                            && request.resource.size < 25 * 1024 * 1024
+                            && (request.resource.contentType.matches('image/.*')
+                                || request.resource.contentType.matches('video/.*'));
+      allow delete: if request.auth != null && request.auth.uid == userId;
     }
-    // Fallback security rule
+
+    // Everything else: no client access. Server-side (Admin SDK) bypasses rules.
     match /{allPaths=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if false;
     }
   }
 }

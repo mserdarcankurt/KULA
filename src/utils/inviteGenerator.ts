@@ -35,8 +35,8 @@ const WHIMSICAL_WORDS = [
   'knit', 'mend', 'craft', 'share', 'give', 'vibe', 'chat', 'walk', 'smile'
 ];
 
-import { runTransaction, doc, getDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '../lib/firebase';
 
 /**
  * Generates a friendly, thematic invite passcode.
@@ -52,34 +52,26 @@ export function generateThematicCode(): string {
 }
 
 /**
- * Creates a unique invitation record in Firestore invites collection using the code as doc ID.
- * Runs in a transaction to prevent duplicate entries or collisions.
+ * Creates a unique invitation record via the createInvite Cloud Function
+ * (functions/src/invites.ts). Server-side so that clients never read or
+ * write the invites collection directly — codes can't be probed or forged.
+ * The host's name/photo are derived server-side from the caller's profile.
  */
 export async function createUniqueInvite(
   code: string,
-  hostUid: string,
-  hostName: string,
-  hostPhoto: string,
+  _hostUid: string,
+  _hostName: string,
+  _hostPhoto: string,
   memo: string
 ): Promise<string> {
-  return await runTransaction(db, async (transaction) => {
-    const inviteRef = doc(db, 'invites', code.toLowerCase().trim());
-    const inviteSnap = await transaction.get(inviteRef);
-
-    if (inviteSnap.exists()) {
+  const createInviteFn = httpsCallable<{ code: string; memo: string }, { code: string }>(functions, 'createInvite');
+  try {
+    const { data } = await createInviteFn({ code: code.toLowerCase().trim(), memo: memo.trim() });
+    return data.code;
+  } catch (err: any) {
+    if ((err?.code || '').includes('already-exists')) {
       throw new Error('This invitation passcode already exists. Please shuffle and try a different one.');
     }
-
-    transaction.set(inviteRef, {
-      code: code.toLowerCase().trim(),
-      createdBy: hostUid,
-      createdByName: hostName,
-      createdByPhoto: hostPhoto,
-      createdAt: serverTimestamp(),
-      status: 'PENDING',
-      memo: memo.trim()
-    });
-
-    return code;
-  });
+    throw err;
+  }
 }

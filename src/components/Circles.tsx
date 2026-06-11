@@ -396,7 +396,9 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
         creatorId: user.uid,
         privacy,
         photoURL: photoURL || null,
-        memberCount: 1,
+        // Starts at 0 — the onCircleMemberCreated trigger increments it when
+        // the creator's member doc (written just below) lands.
+        memberCount: 0,
         createdAt: serverTimestamp()
       });
 
@@ -432,15 +434,7 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
       await updateDoc(doc(db, 'users', user.uid), {
         joinedCircles: arrayUnion(circleId)
       });
-
-      // Update memberCount
-      const circleRef = doc(db, 'circles', circleId);
-      const circleSnap = await getDoc(circleRef);
-      if (circleSnap.exists()) {
-        await updateDoc(circleRef, {
-          memberCount: (circleSnap.data().memberCount || 0) + 1
-        });
-      }
+      // memberCount is maintained server-side by onCircleMemberCreated.
     } catch (err) {
       console.error('Error joining circle:', err);
     }
@@ -469,23 +463,8 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
     await new Promise(resolve => setTimeout(resolve, 100));
 
     try {
-      // Update memberCount and privacy FIRST before removing membership
-      const circleRef = doc(db, 'circles', circleId);
-      const circleSnap = await getDoc(circleRef);
-      if (circleSnap.exists()) {
-        const currentCount = circleSnap.data().memberCount || 1;
-        if (currentCount <= 1) {
-          await updateDoc(circleRef, {
-            memberCount: 0,
-            privacy: 'HIDDEN'
-          });
-        } else {
-          await updateDoc(circleRef, {
-            memberCount: currentCount - 1
-          });
-        }
-      }
-
+      // memberCount (and auto-hiding empty circles) is maintained server-side
+      // by onCircleMemberDeleted — deleting the member doc is all we do here.
       await deleteDoc(doc(db, 'circles', circleId, 'members', user.uid));
       
       // Update user profile

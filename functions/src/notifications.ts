@@ -1,10 +1,8 @@
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import * as admin from 'firebase-admin';
-import { getDb } from "./utils";
+import { getDb, getDatabaseId } from "./utils";
 
-const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true';
-const isDevMode = isEmulator || process.env.NODE_ENV === 'development';
-const databaseId = isDevMode ? '(default)' : 'kulasharingapp';
+const databaseId = getDatabaseId();
 
 /**
  * onNotificationCreated:

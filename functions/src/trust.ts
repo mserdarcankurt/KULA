@@ -102,10 +102,12 @@ export const getTrustPath = onCall(async (request) => {
     return { degrees: null, chain: [], via: undefined };
   }
 
-  const { targetUid, maxDepth = 4 } = request.data as { targetUid: string; maxDepth?: number };
-  if (!targetUid) {
+  const { targetUid, maxDepth: requestedDepth = 4 } = request.data as { targetUid: string; maxDepth?: number };
+  if (!targetUid || typeof targetUid !== 'string' || targetUid.length > 128) {
     throw new Error("invalid-argument: missing targetUid");
   }
+  // Server-side clamp: clients must not be able to traverse the whole graph.
+  const maxDepth = Math.min(Math.max(Number(requestedDepth) || 4, 1), 4);
 
   const db = getDb();
 
@@ -174,7 +176,9 @@ export const getNetworkGraph = onCall(async (request) => {
     return { nodes: [], links: [], lineageIds: [] };
   }
 
-  const { maxDepth = 4 } = request.data as { maxDepth?: number } || {};
+  const { maxDepth: requestedDepth = 4 } = request.data as { maxDepth?: number } || {};
+  // Server-side clamp: clients must not be able to traverse the whole graph.
+  const maxDepth = Math.min(Math.max(Number(requestedDepth) || 4, 1), 4);
   const db = getDb();
 
   // 1. Fetch all users and accepted vouches
