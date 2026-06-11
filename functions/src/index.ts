@@ -4,6 +4,7 @@ import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import { profiles, circles, circleMemberships, inviteChain, mosaicData, gratitudeNotes, seedVouches } from "./seedProfiles";
 import { items1 } from "./seedItems1";
 import { items2 } from "./seedItems2";
+import { BatchManager, getDatabaseId } from "./utils";
 
 admin.initializeApp();
 
@@ -12,8 +13,6 @@ admin.initializeApp();
 // function. Never gate security on NODE_ENV — it can be set accidentally.
 const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true';
 const db = getFirestore(getDatabaseId());
-
-import { BatchManager, getDatabaseId } from "./utils";
 export const seed = onRequest({ timeoutSeconds: 120, memory: '512MiB' }, async (req, res) => {
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
