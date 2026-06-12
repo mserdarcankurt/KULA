@@ -31,6 +31,7 @@ import { db } from '../lib/firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from '../hooks/useAuth';
 import { logEvent } from '../lib/analytics';
+import { hapticSuccess } from '../lib/haptics';
 
 interface GratitudeFlowProps {
   recipientId: string;
@@ -93,6 +94,7 @@ export default function GratitudeFlow({
       // trustMosaic counters for both parties are incremented server-side
       // by the onGratitudeCreated trigger.
 
+      hapticSuccess();
       setDone(true);
       setTimeout(() => {
         onComplete();

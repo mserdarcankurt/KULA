@@ -26,6 +26,7 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { AlertTriangle, X, Send, CheckCircle2 } from 'lucide-react';
 import { db } from '../lib/firebase';
+import { showToast } from '../lib/dialogs';
 import { useAuth } from '../hooks/useAuth';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { logEvent } from '../lib/analytics';
@@ -97,7 +98,7 @@ export default function ReportSheet({ type, targetId, targetName, onClose }: Rep
       setTimeout(() => onClose(), 2000);
     } catch (err) {
       console.error('Failed to submit report:', err);
-      alert('Failed to submit report. Please try again.');
+      showToast('Failed to submit report. Please try again.', 'warning');
     } finally {
       setSubmitting(false);
     }

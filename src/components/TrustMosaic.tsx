@@ -128,7 +128,7 @@ export default function TrustMosaicComponent({ userId, mosaic, memberSince, comp
       {totalExchanges > 0 && (completedAsks + completedShares + completedJoins === 0) && (
         <div className="flex items-center justify-center gap-2 bg-[#FAF7F0] border border-[#E8E2D2] rounded-2xl p-3 shadow-sm">
           <Handshake size={14} className="text-emerald-600" />
-          <span className="text-sm font-black text-[#5B6B56]">{totalExchanges}</span>
+          <span className="text-sm font-black text-brand">{totalExchanges}</span>
           <span className="text-[10px] font-bold uppercase tracking-widest text-[#7A6D55]">exchanges completed</span>
         </div>
       )}

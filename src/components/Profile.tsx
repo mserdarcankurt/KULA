@@ -46,6 +46,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { LogOut, Star, Award, MapPin, Heart, Settings, Tag, Clock, CheckCircle2, Globe, Shield, Target, Sparkles, Languages, X, Users, Instagram, Home, Plus, Trash2, User, Network, EyeOff, AlertTriangle, FileText } from 'lucide-react';
 import { db, functions } from '../lib/firebase';
+import { showToast, confirmAction } from '../lib/dialogs';
 import { httpsCallable } from 'firebase/functions';
 import { collection, query, where, onSnapshot, serverTimestamp, doc, updateDoc, setDoc, getDoc, addDoc, deleteDoc } from 'firebase/firestore';
 import PublicProfile from './PublicProfile';
@@ -56,6 +57,7 @@ import SeedData from './SeedData';
 import TrustMosaicComponent from './TrustMosaic';
 import { getFallbackImage } from '../lib/artDirection';
 import { clearTrustGraphCache } from '../lib/trustGraph';
+import { hapticSuccess } from '../lib/haptics';
 import { generateRandomizedCenter, NEIGHBORHOOD_RADIUS_OPTIONS, DEFAULT_NEIGHBORHOOD_RADIUS } from '../lib/neighborhoodPrivacy';
 import AddressAutocomplete from './AddressAutocomplete';
 import { Map, AdvancedMarker, useMap } from '@vis.gl/react-google-maps';
@@ -182,7 +184,7 @@ function ItemRow({ item, isParticipation }: ItemRowProps) {
         <button 
           onClick={async (e) => {
             e.stopPropagation();
-            if (window.confirm("Remove this item?")) {
+            if (await confirmAction({ title: 'Remove this item?', message: 'It will disappear from the neighborhood for everyone.', confirmLabel: 'Remove', danger: true })) {
               await updateDoc(doc(db, 'items', item.id), { status: 'DELETED' });
             }
           }}
@@ -321,7 +323,7 @@ export default function Profile({
     try {
       const exactCoords = { lat: parseFloat(newLocLat), lng: parseFloat(newLocLng) };
       if (isNaN(exactCoords.lat) || isNaN(exactCoords.lng)) {
-        alert('Please enter valid latitude and longitude values.');
+        showToast('Please enter valid latitude and longitude values.', 'warning');
         setSavingLocation(false);
         return;
       }
@@ -421,7 +423,7 @@ export default function Profile({
     const latNum = parseFloat(editingLocLat);
     const lngNum = parseFloat(editingLocLng);
     if (isNaN(latNum) || isNaN(lngNum)) {
-      alert('Please enter valid coordinates.');
+      showToast('Please enter valid coordinates.', 'warning');
       return;
     }
 
@@ -800,7 +802,7 @@ export default function Profile({
       setInviteMemo('');
       // Generate a new candidate code for the next invite
       setDraftCode(generateThematicCode());
-      alert('Invitation code generated successfully!');
+      showToast('Invitation code generated!', 'success');
     } catch (err: any) {
       console.error('Invite creation failed:', err);
       setGeneratingError(err.message || 'Failed to create invite.');
@@ -810,13 +812,18 @@ export default function Profile({
   };
 
   const handleDeleteInvite = async (codeId: string) => {
-    const confirmDelete = window.confirm(`Revoke the invite code "${codeId}"? Anyone who has this code won't be able to use it anymore.`);
+    const confirmDelete = await confirmAction({
+      title: 'Revoke this invite?',
+      message: `Anyone who has the code "${codeId}" won't be able to use it anymore.`,
+      confirmLabel: 'Revoke',
+      danger: true,
+    });
     if (!confirmDelete) return;
     try {
       await deleteDoc(doc(db, 'invites', codeId));
     } catch (err) {
       console.error('Failed to delete invite:', err);
-      alert('Failed to revoke code.');
+      showToast('Failed to revoke code.', 'warning');
     }
   };
 
@@ -942,6 +949,7 @@ export default function Profile({
     setAcceptingVouchId(vouchId);
     try {
       await updateDoc(doc(db, 'vouches', vouchId), { status: 'ACCEPTED' });
+      hapticSuccess();
       clearTrustGraphCache();
       // Notify sender
       await addDoc(collection(db, 'notifications'), {
@@ -1086,7 +1094,7 @@ export default function Profile({
                             onClick={() => {
                               const shareLink = `${window.location.origin}/?code=${invite.code}`;
                               navigator.clipboard.writeText(shareLink);
-                              alert('Invite link copied to clipboard:\n' + shareLink);
+                              showToast('Invite link copied to clipboard!', 'success');
                             }}
                             className="px-3 py-1.5 bg-[#F3F1EB] hover:bg-stone-200 rounded-lg text-[9px] font-black uppercase tracking-widest text-stone-600"
                           >
@@ -1920,7 +1928,7 @@ export default function Profile({
             onClick={() => {
               const url = `${window.location.origin}/?u=${profile.instagramHandle || user.uid}`;
               navigator.clipboard.writeText(url);
-              alert('Link copied to clipboard!\n\n' + url);
+              showToast('Link copied to clipboard!', 'success');
             }}
             className="flex-1 px-4 py-3 bg-stone-900 text-white rounded-2xl flex items-center justify-center gap-2 font-bold text-[10px] uppercase tracking-widest shadow-md hover:bg-stone-800 transition-all"
           >

@@ -34,6 +34,7 @@ import { Item, UserProfile, Circle } from '../types';
 import { X, Send, Network, MessageCircle, MapPin, Calendar, Share, Heart, Users, Flag } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { confirmAction } from '../lib/dialogs';
 import { collection, addDoc, serverTimestamp, query, orderBy, onSnapshot, doc, updateDoc, getDoc, where } from 'firebase/firestore';
 import { formatDistanceToNow } from 'date-fns';
 import { getFallbackImage } from '../lib/artDirection';
@@ -324,7 +325,7 @@ export function ItemDetailsSheet({ item, onClose, onViewProfile, focusComment = 
               {user?.uid === item.ownerId && (
                 <button 
                   onClick={async () => {
-                    if (window.confirm("Are you sure you want to remove this item from the neighborhood?")) {
+                    if (await confirmAction({ title: 'Remove this item?', message: 'It will disappear from the neighborhood for everyone.', confirmLabel: 'Remove', danger: true })) {
                       try {
                         await updateDoc(doc(db, 'items', item.id), { status: 'DELETED' });
                         onClose();
@@ -355,15 +356,15 @@ export function ItemDetailsSheet({ item, onClose, onViewProfile, focusComment = 
               
                 <div className="flex items-center gap-2 mb-3 flex-wrap">
                   <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest label-transition ${
-                    item.type === 'SHARE' ? 'bg-green-100 text-green-700' : 
-                    item.type === 'ASK' ? 'bg-blue-100 text-blue-700' : 
+                    item.type === 'SHARE' ? 'bg-brand/10 text-brand-deep' : 
+                    item.type === 'ASK' ? 'bg-terracotta/10 text-terracotta' : 
                     item.type === 'JOIN' ? 'bg-teal-100 text-teal-700' :
                     'bg-stone-100 text-stone-600'
                   }`}>
                     {item.type}
                   </span>
                   {item.category && (
-                    <span className="px-3 py-1 bg-indigo-50 text-indigo-600 rounded-lg text-[10px] font-black uppercase tracking-widest label-transition">
+                    <span className="px-3 py-1 bg-brand/5 text-brand rounded-lg text-[10px] font-black uppercase tracking-widest label-transition">
                       {item.category}
                     </span>
                   )}
@@ -372,7 +373,7 @@ export function ItemDetailsSheet({ item, onClose, onViewProfile, focusComment = 
                       item.sharingMode === 'GIFT' ? 'bg-[#4A6B53]/10 text-[#4A6B53] border-[#4A6B53]/20' :
                       item.sharingMode === 'LEND' ? 'bg-amber-55 border-amber-100/50 text-[#8F5E36] bg-[#D4A373]/15' :
                       item.sharingMode === 'BORROW' ? 'bg-[#D4A373]/10 border-[#D4A373]/30 text-[#8F5E36]' :
-                      item.sharingMode === 'SKILL' ? 'bg-indigo-50 text-indigo-700 border-indigo-150' :
+                      item.sharingMode === 'SKILL' ? 'bg-brand/5 text-brand-deep border-brand/15' :
                       'bg-rose-50 text-rose-700 border-rose-150'
                     }`}>
                       <span>
@@ -420,18 +421,18 @@ export function ItemDetailsSheet({ item, onClose, onViewProfile, focusComment = 
                   <div className="mt-4 pt-4 border-t border-stone-200 flex flex-wrap items-center justify-between gap-4">
                     <button 
                       onClick={() => onViewProfile(item.ownerId)}
-                      className="flex items-center gap-2 hover:text-indigo-600 transition-colors group/name"
+                      className="flex items-center gap-2 hover:text-brand transition-colors group/name"
                     >
-                      <div className="w-6 h-6 rounded-full bg-stone-200 overflow-hidden flex-shrink-0 group-hover/name:ring-2 group-hover/name:ring-indigo-100 transition-all">
+                      <div className="w-6 h-6 rounded-full bg-stone-200 overflow-hidden flex-shrink-0 group-hover/name:ring-2 group-hover/name:ring-brand/15 transition-all">
                          {item.ownerPhoto ? (
                            <img src={item.ownerPhoto} alt="Owner" className="w-full h-full object-cover" />
                          ) : (
-                           <div className="w-full h-full bg-indigo-100 flex items-center justify-center text-indigo-600 text-[10px] font-bold uppercase">
+                           <div className="w-full h-full bg-brand/15 flex items-center justify-center text-brand text-[10px] font-bold uppercase">
                              {item.ownerName ? item.ownerName.charAt(0) : '?'}
                            </div>
                          )}
                       </div>
-                      <span className="text-xs font-bold text-stone-600 group-hover/name:text-indigo-600 underline-offset-4 decoration-2">
+                      <span className="text-xs font-bold text-stone-600 group-hover/name:text-brand underline-offset-4 decoration-2">
                         <OwnerName ownerId={item.ownerId} initialName={item.ownerName} className="group-hover/name:underline" />
                       </span>
                       <ConnectionBadge targetUserId={item.ownerId} degrees={item.degrees} className="ml-2" />
@@ -446,7 +447,7 @@ export function ItemDetailsSheet({ item, onClose, onViewProfile, focusComment = 
 
                   {commonCircles.length > 0 && (
                     <div className="mt-4 pt-4 border-t border-stone-200/60 flex flex-col gap-1.5 text-left">
-                      <div className="flex items-center gap-1.5 text-[#5B6B56]">
+                      <div className="flex items-center gap-1.5 text-brand">
                         <Users size={12} />
                         <span className="text-[9px] font-black uppercase tracking-widest">
                           Shared Circles with Owner:
@@ -456,7 +457,7 @@ export function ItemDetailsSheet({ item, onClose, onViewProfile, focusComment = 
                         {commonCircles.map(circle => (
                           <span
                             key={circle.id}
-                            className="px-2 py-0.5 bg-white border border-stone-200 text-[#5B6B56] text-[8px] font-bold uppercase rounded-md shadow-sm"
+                            className="px-2 py-0.5 bg-white border border-stone-200 text-brand text-[8px] font-bold uppercase rounded-md shadow-sm"
                           >
                             #{circle.name}
                           </span>
@@ -475,7 +476,7 @@ export function ItemDetailsSheet({ item, onClose, onViewProfile, focusComment = 
                         </div>
                       )}
                       {item.eventTime && (
-                        <div className="flex items-center gap-2 text-sm text-indigo-600 font-medium">
+                        <div className="flex items-center gap-2 text-sm text-brand font-medium">
                           <Calendar size={14} />
                           <span>
                             Starts: {new Date(typeof item.eventTime?.toDate === 'function' ? item.eventTime.toDate() : item.eventTime).toLocaleString()}
@@ -539,7 +540,7 @@ export function ItemDetailsSheet({ item, onClose, onViewProfile, focusComment = 
                   </div>
                 ) : mainComments.length === 0 ? (
                   <div className="bg-stone-50 rounded-3xl p-8 text-center border-2 border-dashed border-stone-200">
-                    <div className="w-12 h-12 rounded-full bg-indigo-50 text-indigo-400 mx-auto flex items-center justify-center mb-3">
+                    <div className="w-12 h-12 rounded-full bg-brand/5 text-brand/60 mx-auto flex items-center justify-center mb-3">
                       <MessageCircle size={20} />
                     </div>
                     <p className="text-stone-500 text-sm font-medium">No comments yet</p>
@@ -556,7 +557,7 @@ export function ItemDetailsSheet({ item, onClose, onViewProfile, focusComment = 
                           <div className="flex items-baseline justify-between mb-1">
                             <button 
                               onClick={() => onViewProfile(c.userId)}
-                              className="text-sm font-bold text-stone-900 hover:text-indigo-600 hover:underline decoration-2 underline-offset-2 transition-all"
+                              className="text-sm font-bold text-stone-900 hover:text-brand hover:underline decoration-2 underline-offset-2 transition-all"
                             >
                               {c.userName}
                             </button>
@@ -571,7 +572,7 @@ export function ItemDetailsSheet({ item, onClose, onViewProfile, focusComment = 
                           </div>
                           <button 
                             onClick={() => setReplyTo(c)}
-                            className="mt-2 text-[10px] font-black uppercase tracking-widest text-stone-400 hover:text-indigo-600 transition-colors px-2"
+                            className="mt-2 text-[10px] font-black uppercase tracking-widest text-stone-400 hover:text-brand transition-colors px-2"
                           >
                             Reply
                           </button>
@@ -587,7 +588,7 @@ export function ItemDetailsSheet({ item, onClose, onViewProfile, focusComment = 
                             <div className="flex items-baseline justify-between mb-1">
                               <button 
                                 onClick={() => onViewProfile(r.userId)}
-                                className="text-xs font-bold text-stone-900 hover:text-indigo-600 hover:underline decoration-2 underline-offset-2 transition-all"
+                                className="text-xs font-bold text-stone-900 hover:text-brand hover:underline decoration-2 underline-offset-2 transition-all"
                               >
                                 {r.userName}
                               </button>
@@ -613,17 +614,17 @@ export function ItemDetailsSheet({ item, onClose, onViewProfile, focusComment = 
           {/* Comment Input */}
           <div className="flex-none p-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-6 border-t border-stone-100 bg-white">
             {replyTo && (
-              <div className="flex items-center justify-between px-4 py-2 bg-indigo-50 rounded-t-xl border-x border-t border-indigo-100 -mb-px mx-auto max-w-2xl">
-                <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest">
-                  Replying to <span className="text-indigo-800">{replyTo.userName}</span>
+              <div className="flex items-center justify-between px-4 py-2 bg-brand/5 rounded-t-xl border-x border-t border-brand/15 -mb-px mx-auto max-w-2xl">
+                <p className="text-[10px] font-bold text-brand uppercase tracking-widest">
+                  Replying to <span className="text-brand-deep">{replyTo.userName}</span>
                 </p>
-                <button onClick={() => setReplyTo(null)} className="text-indigo-400 hover:text-indigo-600">
+                <button onClick={() => setReplyTo(null)} className="text-brand/60 hover:text-brand">
                   <X size={14} />
                 </button>
               </div>
             )}
             <form onSubmit={handlePostComment} className="flex items-end gap-2 max-w-2xl mx-auto">
-              <div className={`flex-1 bg-stone-50 border border-stone-200 focus-within:border-indigo-300 focus-within:bg-white px-4 py-2 transition-all shadow-sm flex items-center ${replyTo ? 'rounded-b-2xl rounded-tr-2xl' : 'rounded-2xl'}`}>
+              <div className={`flex-1 bg-stone-50 border border-stone-200 focus-within:border-brand/40 focus-within:bg-white px-4 py-2 transition-all shadow-sm flex items-center ${replyTo ? 'rounded-b-2xl rounded-tr-2xl' : 'rounded-2xl'}`}>
                 <input
                   ref={commentInputRef}
                   type="text"
@@ -636,7 +637,7 @@ export function ItemDetailsSheet({ item, onClose, onViewProfile, focusComment = 
               <button
                 type="submit"
                 disabled={!newComment.trim()}
-                className="h-12 w-12 bg-indigo-600 text-white rounded-2xl flex items-center justify-center flex-shrink-0 disabled:opacity-50 transition-all active:scale-95 shadow-md hover:bg-indigo-700 disabled:hover:bg-indigo-600 disabled:shadow-none"
+                className="h-12 w-12 bg-brand text-white rounded-2xl flex items-center justify-center flex-shrink-0 disabled:opacity-50 transition-all active:scale-95 shadow-md hover:bg-brand-deep disabled:hover:bg-brand disabled:shadow-none"
               >
                 <Send size={18} className="translate-x-[-1px] translate-y-[1px]" />
               </button>

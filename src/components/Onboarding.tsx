@@ -797,7 +797,7 @@ export default function Onboarding({ onComplete }: { onComplete: (action?: 'give
               onClick={() => completeOnboarding('give')}
               className="w-full p-4 bg-stone-900/80 border border-stone-850 hover:border-[#c1a077]/40 rounded-2xl text-left flex items-start gap-4 transition-all hover:bg-stone-850/80 group"
             >
-              <div className="w-10 h-10 rounded-xl bg-[#5A5A40]/30 border border-[#5A5A40]/30 flex items-center justify-center text-xl shrink-0 group-hover:scale-105 transition-transform">
+              <div className="w-10 h-10 rounded-xl bg-brand/30 border border-brand/30 flex items-center justify-center text-xl shrink-0 group-hover:scale-105 transition-transform">
                 🎁
               </div>
               <div className="space-y-0.5">

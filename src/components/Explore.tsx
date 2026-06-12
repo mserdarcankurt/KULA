@@ -116,13 +116,13 @@ function FilterPopover({
 
       {/* 1. Feed Scope */}
       <div className="space-y-1.5">
-        <label className="text-[9px] font-black uppercase tracking-widest text-[#5B6B56] block">
+        <label className="text-[9px] font-black uppercase tracking-widest text-brand block">
           Feed Scope
         </label>
         <select
           value={selectedFilterScope}
           onChange={(e) => setSelectedFilterScope(e.target.value)}
-          className="w-full text-[11px] font-bold bg-[#F6F4EE] border border-[#D9D0C0] rounded-xl px-3 py-2 text-stone-700 focus:outline-none focus:border-[#5B6B56] cursor-pointer"
+          className="w-full text-[11px] font-bold bg-[#F6F4EE] border border-[#D9D0C0] rounded-xl px-3 py-2 text-stone-700 focus:outline-none focus:border-brand cursor-pointer"
         >
           <optgroup label="Connection Levels">
             <option value="trust_6">Whole World (All)</option>
@@ -146,7 +146,7 @@ function FilterPopover({
 
       {/* 2. Post Type */}
       <div className="space-y-1.5">
-        <label className="text-[9px] font-black uppercase tracking-widest text-[#5B6B56] block">
+        <label className="text-[9px] font-black uppercase tracking-widest text-brand block">
           Post Type
         </label>
         <div className="grid grid-cols-4 gap-1">
@@ -158,7 +158,7 @@ function FilterPopover({
                 onClick={() => setTypeFilter(t)}
                 className={`py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider text-center transition-all border ${
                   isActive
-                    ? 'bg-[#5B6B56] text-white border-[#5B6B56] shadow-sm'
+                    ? 'bg-brand text-white border-brand shadow-sm'
                     : 'bg-[#F6F4EE] text-stone-600 border-[#D9D0C0] hover:bg-[#EADFC9]'
                 }`}
               >
@@ -171,13 +171,13 @@ function FilterPopover({
 
       {/* 3. Category */}
       <div className="space-y-1.5">
-        <label className="text-[9px] font-black uppercase tracking-widest text-[#5B6B56] block">
+        <label className="text-[9px] font-black uppercase tracking-widest text-brand block">
           Category
         </label>
         <select
           value={categoryFilter}
           onChange={(e) => setCategoryFilter(e.target.value)}
-          className="w-full text-[11px] font-bold bg-[#F6F4EE] border border-[#D9D0C0] rounded-xl px-3 py-2 text-stone-700 focus:outline-none focus:border-[#5B6B56] cursor-pointer"
+          className="w-full text-[11px] font-bold bg-[#F6F4EE] border border-[#D9D0C0] rounded-xl px-3 py-2 text-stone-700 focus:outline-none focus:border-brand cursor-pointer"
         >
           <option value="ALL">All Categories</option>
           {Object.keys(ART_DIRECTION.fallbacks)
@@ -236,8 +236,8 @@ function FlowPostCard({ item, onLike, onComment, onViewProfile, currentUserId }:
                 onClick={() => onViewProfile(item.ownerId)}
               />
               {item.degrees !== undefined && item.degrees > 0 && (
-                <span className="text-[9px] text-[#5B6B56] font-bold bg-[#5B6B56]/5 px-2 py-0.5 rounded-full border border-[#5B6B56]/15">
-                  {item.degrees === 1 ? '1st' : item.degrees === 2 ? '2nd' : `${item.degrees}rd`} degree
+                <span className="text-[9px] text-brand font-bold bg-brand/5 px-2 py-0.5 rounded-full border border-brand/15">
+                  {item.degrees === 1 ? '1st' : item.degrees === 2 ? '2nd' : item.degrees === 3 ? '3rd' : `${item.degrees}th`} degree
                 </span>
               )}
             </div>
@@ -287,7 +287,7 @@ function FlowPostCard({ item, onLike, onComment, onViewProfile, currentUserId }:
 
         <button 
           onClick={onComment}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold text-[#5B6B56] hover:bg-[#5B6B56]/5 transition-all"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold text-brand hover:bg-brand/5 transition-all"
         >
           <MessageCircle size={14} />
           <span>Discuss</span>
@@ -370,7 +370,7 @@ function BuzzCommentCard({ comment, onViewItem, onViewProfile }: BuzzCommentCard
         "{comment.text}"
       </div>
 
-      <div className="flex items-center justify-between text-[10px] text-[#5B6B56] font-bold mt-1 gap-2">
+      <div className="flex items-center justify-between text-[10px] text-brand font-bold mt-1 gap-2">
         <span className="truncate max-w-[65%]">
           → {comment.itemTitle}
         </span>
@@ -750,7 +750,7 @@ export default function Explore({
                   onClick={() => setFeedMode(id as 'BOARD' | 'FLOW')}
                   className={`py-1.5 rounded-xl transition-all flex items-center justify-center gap-1.5 text-[9px] font-black uppercase tracking-wider relative ${
                     isActive 
-                      ? 'bg-[#5B6B56] text-white shadow-sm font-black' 
+                      ? 'bg-brand text-white shadow-sm font-black' 
                       : 'text-stone-500 hover:text-stone-850'
                   } sm:px-4`}
                 >
@@ -766,7 +766,7 @@ export default function Explore({
               onClick={() => setShowFilters(!showFilters)}
               className={`p-2 rounded-2xl transition-all border shadow-sm flex items-center justify-center gap-1.5 relative ${
                 activeFilterCount > 0
-                  ? 'bg-[#5B6B56] text-white border-[#5B6B56] hover:bg-[#4E5D4A]'
+                  ? 'bg-brand text-white border-brand hover:bg-brand-deep'
                   : 'bg-[#F6F4EE] text-stone-700 border-stone-350 hover:bg-[#EADFC9]'
               }`}
               title="Filters"
@@ -881,7 +881,7 @@ export default function Explore({
                       {/* Composer Footer */}
                       <div className="flex items-center justify-between border-t border-stone-200/60 pt-3 mt-1">
                         <label className="flex items-center gap-1.5 cursor-pointer text-stone-500 hover:text-stone-700 transition-colors">
-                          <ImageIcon size={16} className="text-[#5B6B56]" />
+                          <ImageIcon size={16} className="text-brand" />
                           <span className="text-[11px] font-bold uppercase tracking-wider select-none">Add Photo</span>
                           <input
                             type="file"
@@ -896,7 +896,7 @@ export default function Explore({
                           disabled={posting || !composerContent.trim()}
                           className={`px-5 py-1.5 rounded-2xl text-[10px] font-black uppercase tracking-wider transition-all duration-200 active:scale-95 ${
                             composerContent.trim() 
-                              ? 'bg-[#5B6B56] hover:bg-[#4E5D4A] text-white shadow-sm'
+                              ? 'bg-brand hover:bg-brand-deep text-white shadow-sm'
                               : 'bg-stone-100 text-stone-400 border border-stone-200 cursor-not-allowed'
                           }`}
                         >
@@ -921,7 +921,7 @@ export default function Explore({
                             onClick={() => setFlowFilter(id as 'ALL' | 'UPDATES' | 'BUZZ')}
                             className={`py-1 rounded-xl transition-all flex items-center justify-center gap-1.5 text-[9px] font-black uppercase tracking-wider relative px-4 ${
                               isActive 
-                                ? 'bg-[#5B6B56] text-white shadow-sm font-black' 
+                                ? 'bg-brand text-white shadow-sm font-black' 
                                 : 'text-stone-500 hover:text-stone-850'
                             }`}
                           >

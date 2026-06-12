@@ -210,7 +210,7 @@ export default function GuardianDashboard() {
           onClick={() => setActiveSubTab('analytics')}
           className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${
             activeSubTab === 'analytics'
-              ? 'bg-[#5B6B56] text-white shadow-md'
+              ? 'bg-brand text-white shadow-md'
               : 'text-stone-500 hover:text-stone-800'
           }`}
         >
@@ -220,7 +220,7 @@ export default function GuardianDashboard() {
           onClick={() => setActiveSubTab('diagnostics')}
           className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${
             activeSubTab === 'diagnostics'
-              ? 'bg-[#5B6B56] text-white shadow-md'
+              ? 'bg-brand text-white shadow-md'
               : 'text-stone-500 hover:text-stone-800'
           }`}
         >
@@ -239,7 +239,7 @@ export default function GuardianDashboard() {
             <div className="flex justify-between items-start mb-6">
               <div>
                 <h3 className="text-md font-extrabold text-stone-850 uppercase tracking-wider flex items-center gap-2">
-                  <TrendingUp className="w-5 h-5 text-[#5B6B56]" />
+                  <TrendingUp className="w-5 h-5 text-brand" />
                   Onboarding Funnel
                 </h3>
                 <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest mt-1">
@@ -275,7 +275,7 @@ export default function GuardianDashboard() {
                         animate={{ width: `${pct}%` }}
                         transition={{ duration: 0.8, ease: 'easeOut', delay: idx * 0.05 }}
                         className={`h-full rounded-full ${
-                          idx === 0 ? 'bg-[#5B6B56]' :
+                          idx === 0 ? 'bg-brand' :
                           idx === 1 ? 'bg-[#677762]' :
                           idx === 2 ? 'bg-[#73846E]' :
                           idx === 3 ? 'bg-[#7F917A]' :
@@ -333,7 +333,7 @@ export default function GuardianDashboard() {
               {/* Connected Neighbor */}
               <div className="p-4 bg-stone-50 rounded-2xl border border-stone-150/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="flex gap-3 items-center">
-                  <div className="p-2.5 rounded-xl bg-emerald-50 text-[#5B6B56] border border-emerald-100">
+                  <div className="p-2.5 rounded-xl bg-emerald-50 text-brand border border-emerald-100">
                     <Users size={18} />
                   </div>
                   <div>

@@ -154,7 +154,7 @@ export default function ConnectionBadge({ targetUserId, className = "", showLine
         <div className="flex flex-wrap items-center justify-center gap-1.5 text-[9px] font-black uppercase tracking-widest text-[#7A6D55] mt-2 bg-[#FAF7F0] px-4 py-2 rounded-2xl border border-[#E8E2D2] shadow-sm">
           {data.fullChain.map((name, idx) => (
             <React.Fragment key={idx}>
-              <span className={idx === 0 ? 'text-stone-400 font-medium normal-case' : idx === data.fullChain!.length - 1 ? 'text-[#5B6B56] font-black' : 'text-stone-600 font-bold'}>
+              <span className={idx === 0 ? 'text-stone-400 font-medium normal-case' : idx === data.fullChain!.length - 1 ? 'text-brand font-black' : 'text-stone-600 font-bold'}>
                 {idx === 0 ? 'You' : name.split(' ')[0]}
               </span>
               {idx < data.fullChain!.length - 1 && (

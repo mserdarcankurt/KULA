@@ -38,6 +38,7 @@
 import React from 'react';
 import { Home, PlusCircle, User, ShieldCheck, Users, Map } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { hapticLight } from '../lib/haptics';
 
 interface NavigationProps {
   activeTab: string;
@@ -85,6 +86,7 @@ export default function Navigation({
             key={tab.id}
             id={`tour-${tab.id}-tab`}  // Used by TourGuide.tsx for tooltip targeting
             onClick={() => {
+              hapticLight();
               if (tab.id === 'community') {
                 setShowCommunityDrawer(!showCommunityDrawer);
               } else {

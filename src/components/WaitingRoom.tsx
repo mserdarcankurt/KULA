@@ -84,10 +84,10 @@ export default function WaitingRoom() {
         >
         {/* Logo */}
         <div className="space-y-2">
-          <div className="w-16 h-16 bg-[#5A5A40] rounded-2xl mx-auto flex items-center justify-center shadow-lg">
+          <div className="w-16 h-16 bg-brand rounded-2xl mx-auto flex items-center justify-center shadow-lg">
             <span className="text-white font-bold text-2xl">K</span>
           </div>
-          <h1 className="serif text-3xl font-bold text-[#5A5A40]">Almost there!</h1>
+          <h1 className="serif text-3xl font-bold text-brand">Almost there!</h1>
         </div>
 
         {/* Host Card */}

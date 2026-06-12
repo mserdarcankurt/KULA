@@ -14,6 +14,7 @@ import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { doc, getDoc, setDoc, serverTimestamp, onSnapshot, updateDoc } from 'firebase/firestore';
 import { UserProfile } from '../types';
 import { logEvent } from '../lib/analytics';
+import { showToast } from '../lib/dialogs';
 
 /**
  * ADMIN STATUS:
@@ -299,10 +300,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const errMsg = error?.message || String(error);
       const isCancellation = errMsg.toLowerCase().includes('cancel') || errMsg.toLowerCase().includes('canceled') || errMsg.toLowerCase().includes('cancelled');
       if (!isCancellation) {
-        alert(
-          `Sign-in failed (${provider}): ${errMsg}\n\n` +
-          `Note: On iOS Simulator, native Apple Sign-In requires an iCloud sandbox account in device settings.`
-        );
+        showToast(`Sign-in failed: ${errMsg}`, 'warning');
       }
     } finally {
       signInInProgress.current = false;

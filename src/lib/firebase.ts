@@ -29,6 +29,7 @@ import { getFirestore, doc, getDocFromServer, initializeFirestore, memoryLocalCa
 import { getFunctions, connectFunctionsEmulator } from 'firebase/functions';
 import { getStorage, connectStorageEmulator } from 'firebase/storage';
 import { getMessaging } from 'firebase/messaging';
+import { showToast } from './dialogs';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 // Initialize the Firebase app instance. This is the root object from which
@@ -197,10 +198,11 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     path
   };
   console.error('Firestore Error: ', JSON.stringify(errInfo));
-  // In dev, also alert for visibility since blocking actions are high-intent
   if (errInfo.error.includes('Missing or insufficient permissions')) {
-    alert("Interaction blocked by privacy settings.");
+    showToast('That action was blocked by privacy settings.', 'warning');
   }
-  
-  throw new Error(JSON.stringify(errInfo));
+  // Deliberately NO throw: this is called from inside onSnapshot error
+  // callbacks, where a throw becomes an uncaught exception that aborts the
+  // rest of the handler (stuck loading spinners) — rules already blocked
+  // the operation; log + toast is the whole job.
 }

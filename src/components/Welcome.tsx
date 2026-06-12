@@ -50,7 +50,7 @@ export default function Welcome() {
           initial={{ opacity: 0, scale: 0.8, rotate: -12 }}
           animate={{ opacity: 1, scale: 1, rotate: 12 }}
           transition={{ duration: 0.8, ease: 'easeOut' }}
-          className="w-20 h-20 bg-[#5A5A40] rounded-3xl flex items-center justify-center shadow-2xl border border-[#7A7A5A]/30 mb-2"
+          className="w-20 h-20 bg-brand rounded-3xl flex items-center justify-center shadow-2xl border border-[#7A7A5A]/30 mb-2"
         >
           <span className="text-white font-bold text-4xl select-none">K</span>
         </motion.div>
@@ -143,7 +143,7 @@ export default function Welcome() {
               {/* Drag indicator */}
               <div className="w-12 h-1 bg-stone-300 rounded-full mb-6" />
 
-              <div className="w-12 h-12 bg-[#5A5A40] rounded-xl flex items-center justify-center mb-4 text-white font-bold text-xl">
+              <div className="w-12 h-12 bg-brand rounded-xl flex items-center justify-center mb-4 text-white font-bold text-xl">
                 K
               </div>
 

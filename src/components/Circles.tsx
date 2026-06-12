@@ -43,6 +43,7 @@
  */
 import React, { useState, useEffect } from 'react';
 import { db, functions, handleFirestoreError, OperationType } from '../lib/firebase';
+import { showToast } from '../lib/dialogs';
 import { httpsCallable } from 'firebase/functions';
 import { fetchUserDocsByIds } from '../lib/batchFetch';
 import { collection, query, onSnapshot, orderBy, addDoc, serverTimestamp, doc, setDoc, deleteDoc, getDoc, updateDoc, arrayUnion, arrayRemove, where, getDocs } from 'firebase/firestore';
@@ -299,7 +300,7 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
           if (snap.exists()) {
             setPendingInviteCircle({ id: snap.id, ...snap.data() } as Circle);
           } else {
-            alert("Circle invitation link is invalid or the circle no longer exists.");
+            showToast("Circle invitation link is invalid or the circle no longer exists.", 'warning');
             onClearSelection?.();
           }
           setLoadingPendingInvite(false);
@@ -566,7 +567,7 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
       });
     } catch (err) {
       console.error('Error leaving circle:', err);
-      alert("Failed to leave circle. Please try again.");
+      showToast("Failed to leave circle. Please try again.", 'warning');
     }
   };
 
@@ -580,7 +581,7 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
       const circleSnap = await getDoc(circleRef);
 
       if (!circleSnap.exists()) {
-        alert("Circle not found. Please check the code.");
+        showToast("Circle not found. Please check the code.", 'warning');
         return;
       }
 
@@ -589,7 +590,7 @@ export default function Circles({ onNavigateToChat, selectedCircleId, onClearSel
       setJoinCode('');
     } catch (err) {
       console.error('Error joining circle by code:', err);
-      alert("Failed to join circle. Make sure the code is correct.");
+      showToast("Failed to join circle. Make sure the code is correct.", 'warning');
     } finally {
       setJoiningCode(false);
     }

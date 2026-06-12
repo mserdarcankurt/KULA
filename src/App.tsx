@@ -44,7 +44,7 @@ const API_KEY = (import.meta.env.VITE_GOOGLE_MAPS_PLATFORM_KEY as string) || '';
  */
 function AppContent() {
   // Pull data from our sensors (hooks)
-  const { user, profile, loading: authLoading } = useAuth();
+  const { user, profile, loading: authLoading, updateProfile } = useAuth();
   const { location } = useGeolocation(!!user);
   
   // Local state for navigation
@@ -274,9 +274,14 @@ function AppContent() {
       <div className="flex flex-col h-[100dvh] max-w-md mx-auto bg-[#FAF7F0] items-center justify-center p-6 relative overflow-hidden">
         <GlobalTraditionsLoader showLearnMore={true} />
         <div className={`transition-all duration-500 mt-4 ${canContinueIntro ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
-          <button 
-            onClick={() => setIntroCompleted(true)} 
-            className="px-6 py-3 bg-[#5B6B56] hover:bg-[#4E5D4A] text-white text-xs font-black uppercase tracking-wider rounded-2xl active:scale-[0.98] transition-all shadow-md cursor-pointer animate-bounce"
+          <button
+            onClick={() => {
+              setIntroCompleted(true);
+              // The opening ritual plays exactly once — returning users go
+              // straight into their neighborhood (no recurring 2.5s lockout).
+              updateProfile({ skipIntroAnimation: true }).catch(() => {});
+            }}
+            className="px-6 py-3 bg-brand hover:opacity-90 text-white text-xs font-black uppercase tracking-wider rounded-2xl active:scale-[0.98] transition-all shadow-md cursor-pointer"
           >
             Your neighborhood is ready ✨
           </button>

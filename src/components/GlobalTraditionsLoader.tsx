@@ -1314,7 +1314,7 @@ export function GlobalTraditionsLoader({ showLearnMore = false }: GlobalTraditio
 
             <button
               onClick={() => setIsModalOpen(false)}
-              className="mt-2 w-full py-2.5 bg-[#5B6B56] hover:bg-[#4E5D4A] text-white text-xs font-black uppercase tracking-wider rounded-xl active:scale-[0.98] transition-all shadow-sm text-center cursor-pointer"
+              className="mt-2 w-full py-2.5 bg-brand hover:bg-brand-deep text-white text-xs font-black uppercase tracking-wider rounded-xl active:scale-[0.98] transition-all shadow-sm text-center cursor-pointer"
             >
               Understood & Inspired
             </button>

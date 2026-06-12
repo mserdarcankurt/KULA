@@ -36,6 +36,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { confirmAction } from '../lib/dialogs';
 import { doc, getDoc, collection, query, where, getDocs, orderBy, onSnapshot, updateDoc, arrayUnion, arrayRemove, addDoc, serverTimestamp } from 'firebase/firestore';
 import { UserProfile, Item, Circle } from '../types';
 import { X, Star, Award, MapPin, Shield, Tag, Heart, CheckCircle2, Clock, Ban, UserMinus, UserCheck, Instagram, Target, Sparkles, Lock, MessageSquare, Users, Flag } from 'lucide-react';
@@ -78,10 +79,10 @@ export default function PublicProfile({ userId, onClose, onNavigateToChat }: Pub
   const handleToggleBlock = async () => {
     if (!user || isBlocking) return;
     
-    const confirmBlock = isBlocked 
-      ? window.confirm("Do you want to unblock this neighbor?")
-      : window.confirm("Block this neighbor? You won't see each other's posts and they won't be able to message you.");
-    
+    const confirmBlock = await confirmAction(isBlocked
+      ? { title: 'Unblock neighbor?', message: "You'll see each other's posts again, and they'll be able to message you.", confirmLabel: 'Unblock' }
+      : { title: 'Block this neighbor?', message: "You won't see each other's posts and they won't be able to message you.", confirmLabel: 'Block', danger: true });
+
     if (!confirmBlock) return;
 
     setIsBlocking(true);
@@ -401,7 +402,7 @@ export default function PublicProfile({ userId, onClose, onNavigateToChat }: Pub
                     <button
                       onClick={handleStartChat}
                       disabled={isStartingChat}
-                      className="flex-1 py-3 bg-[#5B6B56] hover:bg-[#4a5846] text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                      className="flex-1 py-3 bg-brand hover:bg-[#4a5846] text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                     >
                       <MessageSquare size={13} />
                       {isStartingChat ? 'Starting...' : 'Message'}
@@ -451,7 +452,7 @@ export default function PublicProfile({ userId, onClose, onNavigateToChat }: Pub
                     </>
                   ) : (
                     <>
-                      <MapPin size={12} className="text-[#5B6B56]" />
+                      <MapPin size={12} className="text-brand" />
                       <span>Local Neighbor</span>
                     </>
                   )}
@@ -476,7 +477,7 @@ export default function PublicProfile({ userId, onClose, onNavigateToChat }: Pub
 
               {commonCircles.length > 0 && (
                 <div className="w-full max-w-sm mx-auto bg-[#FAF7F0] border border-[#E8E2D2] rounded-[1.5rem] p-4 flex flex-col gap-2 shadow-sm mt-4 animate-in fade-in duration-500 text-left">
-                  <div className="flex items-center gap-2 text-[#5B6B56]">
+                  <div className="flex items-center gap-2 text-brand">
                     <Users size={14} className="flex-shrink-0" />
                     <h4 className="text-[9px] font-black uppercase tracking-widest leading-none">
                       Shared Circles ({commonCircles.length})
@@ -486,7 +487,7 @@ export default function PublicProfile({ userId, onClose, onNavigateToChat }: Pub
                     {commonCircles.map(circle => (
                       <span
                         key={circle.id}
-                        className="px-2.5 py-1 bg-white border border-[#E8E2D2] text-[#5B6B56] text-[8.5px] font-bold uppercase rounded-lg shadow-sm"
+                        className="px-2.5 py-1 bg-white border border-[#E8E2D2] text-brand text-[8.5px] font-bold uppercase rounded-lg shadow-sm"
                       >
                         #{circle.name}
                       </span>

@@ -41,6 +41,7 @@
  */
 import React, { useState, useEffect } from 'react';
 import { db, storage } from '../lib/firebase';
+import { showToast } from '../lib/dialogs';
 import { collection, addDoc, serverTimestamp, query, getDocs, where, getDoc, doc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { useAuth } from '../hooks/useAuth';
@@ -50,6 +51,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Joyride, Step, EventData, STATUS } from 'react-joyride';
 import { updateDoc } from 'firebase/firestore';
 import { logEvent } from '../lib/analytics';
+import { hapticSuccess } from '../lib/haptics';
 
 // Location source mode for post creation
 type LocationMode = 'NEIGHBORHOOD' | 'CURRENT_GPS' | 'VENUE' | 'SAVED_LOCATION';
@@ -267,7 +269,7 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
       console.log(`[KULA STORAGE] Upload complete. Download URL: ${downloadUrl}`);
     } catch (err) {
       console.error('[KULA STORAGE] Upload failed:', err);
-      alert('Failed to upload image. Please try again.');
+      showToast('Failed to upload image. Please try again.', 'warning');
     } finally {
       setUploading(false);
     }
@@ -409,6 +411,7 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
         circle_id: initialCircleId || null
       });
 
+      hapticSuccess();
       onSuccess();
     } catch (err) {
       console.error('Error posting item:', err);

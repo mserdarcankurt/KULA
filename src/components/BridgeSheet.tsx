@@ -7,6 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Tag, Zap, Loader2, Share2, Copy, Send, Users } from 'lucide-react';
 import { db } from '../lib/firebase';
+import { showToast } from '../lib/dialogs';
 import { collection, addDoc, serverTimestamp, query, where, onSnapshot, getDoc, doc, updateDoc } from 'firebase/firestore';
 import { useAuth } from '../hooks/useAuth';
 import { Item } from '../types';
@@ -190,7 +191,7 @@ export default function BridgeSheet({ item, onClose, onBridged }: BridgeSheetPro
       setBridgeTarget(null);
     } catch (err) {
       console.error(`Failed to share with ${bridgeTarget.type.toLowerCase()}:`, err);
-      alert('Failed to share: ' + (err as Error).message);
+      showToast('Failed to share: ' + (err as Error).message, 'warning');
     } finally {
       setBridgingId(null);
     }
@@ -238,7 +239,7 @@ export default function BridgeSheet({ item, onClose, onBridged }: BridgeSheetPro
        */
       try {
         await navigator.clipboard.writeText(`${shareText}\n${shareUrl}`);
-        alert('Link copied to clipboard!');
+        showToast('Link copied to clipboard!', 'success');
       } catch (err) {
         console.error('Copy failed', err);
       }

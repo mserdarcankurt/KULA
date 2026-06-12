@@ -123,10 +123,10 @@ export default function InviteGate() {
         >
         {/* Header Branding */}
         <div className="space-y-3">
-          <div className="w-16 h-16 bg-[#5A5A40] rounded-2xl mx-auto flex items-center justify-center shadow-lg transform rotate-6">
+          <div className="w-16 h-16 bg-brand rounded-2xl mx-auto flex items-center justify-center shadow-lg transform rotate-6">
             <span className="text-white font-bold text-2xl">K</span>
           </div>
-          <h1 className="serif text-4xl font-bold text-[#5A5A40]">Welcome to KULA</h1>
+          <h1 className="serif text-4xl font-bold text-brand">Welcome to KULA</h1>
           <p className="text-stone-400 text-sm max-w-xs mx-auto">
             KULA grows through trusted connections.
           </p>
@@ -162,7 +162,7 @@ export default function InviteGate() {
             >
               <div className="space-y-2">
                 <h2 className="serif text-2xl font-semibold text-stone-800">Someone opened the door for you.</h2>
-                <p className="text-xs text-stone-400">Enter the 6-character code they gave you.</p>
+                <p className="text-xs text-stone-400">Enter the invite code they gave you.</p>
               </div>
 
               {/* Styled Thematic Code Input */}
@@ -239,15 +239,15 @@ export default function InviteGate() {
                   <p className="text-xs text-stone-500 italic">
                     • Helped {resolvedHost.helpedCount} neighbor{resolvedHost.helpedCount !== 1 ? 's' : ''}
                   </p>
-                  <p className="text-xs font-semibold text-[#5A5A40] flex items-center gap-1 mt-2">
-                    <Heart size={14} className="fill-[#5A5A40] text-[#5A5A40]" /> They are vouching for you.
+                  <p className="text-xs font-semibold text-brand flex items-center gap-1 mt-2">
+                    <Heart size={14} className="fill-brand text-brand" /> They are vouching for you.
                   </p>
                 </div>
               </div>
 
               {/* Invitation Ready info box */}
               <div className="bg-stone-100 border border-stone-200 rounded-2xl p-4 text-left max-w-sm mx-auto shadow-sm">
-                <h4 className="text-xs font-bold text-[#5A5A40] uppercase tracking-wider mb-1">Invitation Ready</h4>
+                <h4 className="text-xs font-bold text-brand uppercase tracking-wider mb-1">Invitation Ready</h4>
                 <p className="text-xs text-stone-600 leading-relaxed">
                   Welcome! Your invitation has been verified. Once you accept, you will enter KULA—our shared neighborhood circle built on trust and mutual support.
                 </p>

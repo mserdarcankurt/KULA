@@ -36,6 +36,7 @@
 import React, { useState, useEffect } from 'react';
 import { useItems } from '../hooks/useItems';
 import { db } from '../lib/firebase';
+import { showToast } from '../lib/dialogs';
 import { query, collection, getDocs, updateDoc, doc, arrayUnion, arrayRemove, setDoc, serverTimestamp, addDoc, where } from 'firebase/firestore';
 import { MapPin, Tag, Users, Globe, Shield, Target, HeartHandshake, Plus, MessageSquare, Clock, Languages, Loader2, Calendar, Coffee, Share, MessageCircle } from 'lucide-react';
 import { Item, Circle } from '../types';
@@ -52,6 +53,7 @@ import { OwnerAvatar } from './OwnerAvatar';
 import BridgeSheet from './BridgeSheet';
 import { AnimatePresence } from 'motion/react';
 import GlobalTraditionsLoader from './GlobalTraditionsLoader';
+import { hapticSuccess } from '../lib/haptics';
 
 interface FeedProps {
   location: { lat: number; lng: number } | null;
@@ -222,7 +224,7 @@ export default function Feed({
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <button onClick={() => onNavigateToTab?.('post')} className="px-4 py-2 bg-[#5A5A40] text-white text-[10px] font-black uppercase tracking-wider rounded-xl hover:bg-[#4E4E38] active:scale-[0.98] transition-all shadow-sm flex items-center gap-1.5">
+                  <button onClick={() => onNavigateToTab?.('post')} className="px-4 py-2 bg-brand text-white text-[10px] font-black uppercase tracking-wider rounded-xl hover:bg-[#4E4E38] active:scale-[0.98] transition-all shadow-sm flex items-center gap-1.5">
                     🎁 Give something
                   </button>
                   <button onClick={() => onNavigateToTab?.('post')} className="px-4 py-2 bg-stone-200 text-stone-700 text-[10px] font-black uppercase tracking-wider rounded-xl hover:bg-stone-300 active:scale-[0.98] transition-all flex items-center gap-1.5">
@@ -247,7 +249,7 @@ export default function Feed({
                 </button>
                 <button
                   onClick={() => onNavigateToTab?.('post')}
-                  className="px-3 py-2 bg-[#5A5A40] text-white text-[10px] font-black uppercase tracking-wider rounded-xl hover:bg-[#4E4E38] active:scale-[0.98] transition-all shadow-sm flex-none"
+                  className="px-3 py-2 bg-brand text-white text-[10px] font-black uppercase tracking-wider rounded-xl hover:bg-[#4E4E38] active:scale-[0.98] transition-all shadow-sm flex-none"
                 >
                   Post
                 </button>
@@ -268,7 +270,7 @@ export default function Feed({
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <button onClick={() => onNavigateToTab?.('post')} className="px-4 py-2 bg-[#5A5A40] text-white text-[10px] font-black uppercase tracking-wider rounded-xl hover:bg-[#4E4E38] active:scale-[0.98] transition-all shadow-sm flex items-center gap-1.5">
+                <button onClick={() => onNavigateToTab?.('post')} className="px-4 py-2 bg-brand text-white text-[10px] font-black uppercase tracking-wider rounded-xl hover:bg-[#4E4E38] active:scale-[0.98] transition-all shadow-sm flex items-center gap-1.5">
                   🎁 Give something
                 </button>
                 <button onClick={() => onNavigateToTab?.('post')} className="px-4 py-2 bg-stone-200 text-stone-700 text-[10px] font-black uppercase tracking-wider rounded-xl hover:bg-stone-300 active:scale-[0.98] transition-all flex items-center gap-1.5">
@@ -379,7 +381,7 @@ export function ItemCard({ item, circle, onNavigateToChat, onViewProfile, onClic
     if (!user || !circle) return;
 
     if (circle.privacy !== 'PUBLIC') {
-      alert("This is a private circle. Visit the circles page to request access.");
+      showToast("This is a private circle. Visit the Circles page to request access.", 'info');
       return;
     }
 
@@ -413,6 +415,7 @@ export function ItemCard({ item, circle, onNavigateToChat, onViewProfile, onClic
       await updateDoc(itemRef, {
         participants: isParticipating ? arrayRemove(profile.uid) : arrayUnion(profile.uid)
       });
+      if (!isParticipating) hapticSuccess();
     } catch (err) {
       console.error('Error joining Imece:', err);
     } finally {
@@ -500,7 +503,7 @@ export function ItemCard({ item, circle, onNavigateToChat, onViewProfile, onClic
             ownerId={item.ownerId} 
             initialPhotoURL={item.ownerPhoto} 
             initialName={item.ownerName} 
-            className="w-8 h-8 ring-2 ring-stone-100 group-hover:ring-[#5B6B56]/40 transition-all cursor-pointer"
+            className="w-8 h-8 ring-2 ring-stone-100 group-hover:ring-brand/40 transition-all cursor-pointer"
             onClick={(e) => {
               e.stopPropagation();
               onViewProfile?.(item.ownerId);
@@ -512,7 +515,7 @@ export function ItemCard({ item, circle, onNavigateToChat, onViewProfile, onClic
                 e.stopPropagation();
                 onViewProfile?.(item.ownerId);
               }}
-              className="text-stone-800 text-[11px] font-black uppercase tracking-wider hover:text-[#5B6B56] transition-colors text-left"
+              className="text-stone-800 text-[11px] font-black uppercase tracking-wider hover:text-brand transition-colors text-left"
             >
               <OwnerName ownerId={item.ownerId} initialName={item.ownerName} />
             </button>
@@ -580,7 +583,7 @@ export function ItemCard({ item, circle, onNavigateToChat, onViewProfile, onClic
           <div>
             <h4 className={`serif font-bold text-base leading-tight transition-colors line-clamp-2 ${
               item.type === 'JOIN' ? 'text-teal-900 group-hover:text-teal-700' : 
-              'text-stone-900 group-hover:text-[#5B6B56]'
+              'text-stone-900 group-hover:text-brand'
             }`}>
               <div className="flex items-center gap-1.5 flex-wrap">
                 {item.title}
@@ -650,7 +653,7 @@ export function ItemCard({ item, circle, onNavigateToChat, onViewProfile, onClic
         </p>
         <button 
           onClick={handleTranslate}
-          className="absolute right-2 top-2 opacity-0 group-hover/desc:opacity-100 transition-opacity p-1 bg-white rounded-full shadow-sm text-stone-400 hover:text-[#5B6B56]"
+          className="absolute right-2 top-2 opacity-0 group-hover/desc:opacity-100 transition-opacity p-1 bg-white rounded-full shadow-sm text-stone-400 hover:text-brand"
           title={`Translate to ${targetLanguage}`}
         >
           {isTranslating ? <Loader2 size={11} className="animate-spin" /> : <Languages size={11} />}
@@ -722,15 +725,15 @@ export function ItemCard({ item, circle, onNavigateToChat, onViewProfile, onClic
               }`}
             >
               <Users size={11} />
-              <span>{isJoining ? 'Wait...' : isUserParticipating ? 'Going!' : 'RSVP & Join'}</span>
+              <span>{isJoining ? 'Joining…' : isUserParticipating ? 'Going!' : 'RSVP & Join'}</span>
             </button>
           ) : (
             <button 
               onClick={handleInterest}
               disabled={isJoining}
-              className="px-4 py-1.5 bg-[#5B6B56] hover:bg-[#4A5746] text-white rounded-full text-[9px] uppercase font-black tracking-widest transition-all flex items-center gap-1.5 shadow-sm"
+              className="px-4 py-1.5 bg-brand hover:bg-[#4A5746] text-white rounded-full text-[9px] uppercase font-black tracking-widest transition-all flex items-center gap-1.5 shadow-sm"
             >
-              {isJoining ? 'Wait...' : (
+              {isJoining ? 'Joining…' : (
                 <>
                   <MessageSquare size={11} />
                   <span>Contact</span>

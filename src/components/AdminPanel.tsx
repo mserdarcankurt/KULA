@@ -123,7 +123,7 @@ export default function AdminPanel() {
               onClick={() => setActiveTab(id as 'MODERATION' | 'ANALYTICS')}
               className={`py-1.5 px-4 rounded-xl transition-all text-[10px] font-black uppercase tracking-wider ${
                 isActive 
-                  ? 'bg-[#5B6B56] text-white shadow-sm font-black' 
+                  ? 'bg-brand text-white shadow-sm font-black' 
                   : 'text-stone-500 hover:text-stone-850'
               }`}
             >
@@ -269,11 +269,11 @@ export default function AdminPanel() {
             </div>
 
             {/* Active Flows */}
-            <div className="p-6 bg-[#5B6B56]/5 border border-[#5B6B56]/15 rounded-[2rem] shadow-sm flex flex-col justify-between h-40">
-              <span className="text-[10px] font-black uppercase tracking-wider text-[#5B6B56]">
+            <div className="p-6 bg-brand/5 border border-brand/15 rounded-[2rem] shadow-sm flex flex-col justify-between h-40">
+              <span className="text-[10px] font-black uppercase tracking-wider text-brand">
                 Hopescrolling Updates
               </span>
-              <div className="text-4xl font-black text-[#5B6B56]">
+              <div className="text-4xl font-black text-brand">
                 {activeFlows !== null ? activeFlows : '...'}
               </div>
               <p className="text-[10px] text-stone-500">Recent status updates & photos</p>

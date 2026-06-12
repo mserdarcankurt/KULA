@@ -617,7 +617,7 @@ export default function Discovery({ location, circleId, onNavigateToChat, onNavi
                   {hasMore && (
                     <button 
                       onClick={loadMore}
-                      className="bg-[#5B6B56] text-white px-8 py-3 rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg hover:bg-[#4E5D4A] transition-all"
+                      className="bg-brand text-white px-8 py-3 rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg hover:bg-brand-deep transition-all"
                     >
                       Load More
                     </button>

@@ -139,13 +139,13 @@ function FilterPopover({
 
       {/* Scope */}
       <div className="space-y-1.5">
-        <label className="text-[9px] font-black uppercase tracking-widest text-[#5B6B56] block">
+        <label className="text-[9px] font-black uppercase tracking-widest text-brand block">
           Trust Reach
         </label>
         <select
           value={selectedFilterScope}
           onChange={(e) => setSelectedFilterScope(e.target.value)}
-          className="w-full text-[11px] font-bold bg-[#F6F4EE] border border-[#D9D0C0] rounded-xl px-3 py-2 text-stone-700 focus:outline-none focus:border-[#5B6B56] cursor-pointer"
+          className="w-full text-[11px] font-bold bg-[#F6F4EE] border border-[#D9D0C0] rounded-xl px-3 py-2 text-stone-700 focus:outline-none focus:border-brand cursor-pointer"
         >
           <optgroup label="Connection Levels">
             <option value="trust_6">Whole World (All)</option>
@@ -169,7 +169,7 @@ function FilterPopover({
 
       {/* Type */}
       <div className="space-y-1.5">
-        <label className="text-[9px] font-black uppercase tracking-widest text-[#5B6B56] block">
+        <label className="text-[9px] font-black uppercase tracking-widest text-brand block">
           Type
         </label>
         <div className="grid grid-cols-4 gap-1">
@@ -181,7 +181,7 @@ function FilterPopover({
                 onClick={() => setTypeFilter(t)}
                 className={`py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider text-center transition-all border ${
                   isActive
-                    ? 'bg-[#5B6B56] text-white border-[#5B6B56] shadow-sm'
+                    ? 'bg-brand text-white border-brand shadow-sm'
                     : 'bg-[#F6F4EE] text-stone-600 border-[#D9D0C0] hover:bg-[#EADFC9]'
                 }`}
               >
@@ -194,13 +194,13 @@ function FilterPopover({
 
       {/* Category */}
       <div className="space-y-1.5">
-        <label className="text-[9px] font-black uppercase tracking-widest text-[#5B6B56] block">
+        <label className="text-[9px] font-black uppercase tracking-widest text-brand block">
           Category
         </label>
         <select
           value={categoryFilter}
           onChange={(e) => setCategoryFilter(e.target.value)}
-          className="w-full text-[11px] font-bold bg-[#F6F4EE] border border-[#D9D0C0] rounded-xl px-3 py-2 text-stone-700 focus:outline-none focus:border-[#5B6B56] cursor-pointer"
+          className="w-full text-[11px] font-bold bg-[#F6F4EE] border border-[#D9D0C0] rounded-xl px-3 py-2 text-stone-700 focus:outline-none focus:border-brand cursor-pointer"
         >
           <option value="ALL">All Categories</option>
           {Object.keys(ART_DIRECTION.fallbacks)
@@ -309,7 +309,7 @@ export default function CommunityDrawer({ isOpen, onClose, location, onNavigateT
                       onClick={() => setView(opt.id as any)}
                       className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1 ${
                         active 
-                          ? 'bg-[#5B6B56] text-white shadow-sm font-black' 
+                          ? 'bg-brand text-white shadow-sm font-black' 
                           : 'text-stone-500 hover:text-stone-750'
                       }`}
                     >
@@ -335,7 +335,7 @@ export default function CommunityDrawer({ isOpen, onClose, location, onNavigateT
                 <select
                   value={selectedFilterScope}
                   onChange={(e) => setSelectedFilterScope(e.target.value)}
-                  className="text-[9px] font-bold bg-[#F6F4EE] border border-stone-300 rounded-full px-2.5 py-1 text-stone-750 focus:outline-none focus:border-[#5B6B56] cursor-pointer shadow-sm"
+                  className="text-[9px] font-bold bg-[#F6F4EE] border border-stone-300 rounded-full px-2.5 py-1 text-stone-750 focus:outline-none focus:border-brand cursor-pointer shadow-sm"
                 >
                   <optgroup label="Connection Levels">
                     <option value="trust_6">Whole World (All)</option>
@@ -358,13 +358,13 @@ export default function CommunityDrawer({ isOpen, onClose, location, onNavigateT
 
                 {/* Filter indicator chips */}
                 {trustFilter !== 6 && (
-                  <span className="px-2 py-0.5 rounded-full bg-[#5B6B56]/10 text-[#5B6B56] text-[8px] font-bold uppercase flex items-center gap-0.5 border border-[#5B6B56]/20">
+                  <span className="px-2 py-0.5 rounded-full bg-brand/10 text-brand text-[8px] font-bold uppercase flex items-center gap-0.5 border border-brand/20">
                     {TRUST_LEVELS.find(l => l.value === trustFilter)?.short}
                     <button onClick={() => setSelectedFilterScope('trust_6')} className="hover:text-[#C86A51] ml-0.5 font-bold">×</button>
                   </span>
                 )}
                 {circleFilter !== 'ALL' && (
-                  <span className="px-2 py-0.5 rounded-full bg-[#5B6B56]/10 text-[#5B6B56] text-[8px] font-bold uppercase flex items-center gap-0.5 border border-[#5B6B56]/20">
+                  <span className="px-2 py-0.5 rounded-full bg-brand/10 text-brand text-[8px] font-bold uppercase flex items-center gap-0.5 border border-brand/20">
                     {joinedCirclesList.find(c => c.id === circleFilter)?.name || 'Circle'}
                     <button onClick={() => setSelectedFilterScope('trust_6')} className="hover:text-[#C86A51] ml-0.5 font-bold">×</button>
                   </span>
@@ -377,7 +377,7 @@ export default function CommunityDrawer({ isOpen, onClose, location, onNavigateT
                   onClick={() => setShowFilters(!showFilters)}
                   className={`px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider transition-all border shadow-sm flex items-center gap-1 ${
                     activeFilterCount > 0
-                      ? 'bg-[#5B6B56] text-white border-[#5B6B56]'
+                      ? 'bg-brand text-white border-brand'
                       : 'bg-[#F6F4EE] text-stone-700 border-stone-350 hover:bg-[#EADFC9]'
                   }`}
                 >
