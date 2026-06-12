@@ -218,14 +218,15 @@ function AppContent() {
     switch (activeTab) {
       case 'home':
         return (
-          <Explore 
-            location={location} 
+          <Explore
+            location={location}
             onNavigateToChat={(chatId) => {
               setSelectedChatId(chatId);
               setActiveTab('chats');
-            }} 
+            }}
             onNavigateToCircle={handleNavigateToCircle}
             onNavigateToTab={setActiveTab}
+            onOpenCommunity={() => setShowCommunityDrawer(true)}
           />
         );
       // [ALPHA] organizations tab shelved — case removed
@@ -263,7 +264,7 @@ function AppContent() {
       case 'guardian':
         return <GuardianDashboard />;
       default:
-        return <Explore location={location} />;
+        return <Explore location={location} onOpenCommunity={() => setShowCommunityDrawer(true)} />;
     }
   };
 

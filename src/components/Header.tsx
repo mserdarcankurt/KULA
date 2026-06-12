@@ -30,7 +30,7 @@
  */
 import React, { useState } from 'react';
 import { useUnreadCount } from '../hooks/useUnreadCount';
-import { Bell, Search, MessageSquare } from 'lucide-react';
+import { Bell, Search } from 'lucide-react';
 import SearchOverlay from './SearchOverlay';
 import NotificationsOverlay from './NotificationsOverlay';
 import { AnimatePresence } from 'motion/react';
@@ -41,7 +41,7 @@ interface HeaderProps {
 }
 
 export default function Header({ setActiveTab, setSelectedChatId }: HeaderProps) {
-  const { unreadNotifications, unreadChats } = useUnreadCount();
+  const { unreadNotifications } = useUnreadCount();
   const [showSearch, setShowSearch] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   
@@ -79,23 +79,8 @@ export default function Header({ setActiveTab, setSelectedChatId }: HeaderProps)
             )}
           </button>
 
-          {/* Chats button — sets activeTab to 'chats' */}
-          <button 
-            id="tour-header-chats"
-            onClick={() => {
-              if (setSelectedChatId) setSelectedChatId(null); // clear chat selection to show list
-              setActiveTab('chats');
-            }}
-            className="hover:text-brand transition-colors relative p-2 hover:bg-stone-50 rounded-full"
-          >
-            <MessageSquare size={20} />
-            {/* Red dot badge — only visible when unread chats exist */}
-            {unreadChats > 0 && (
-              <span className="absolute top-[-2px] right-[-2px] bg-red-500 text-white min-w-[16px] h-[16px] flex items-center justify-center rounded-full text-[9px] font-bold px-1 border-2 border-white">
-                {unreadChats}
-              </span>
-            )}
-          </button>
+          {/* Chats moved to the bottom navigation (with its unread badge) —
+              the header keeps Search + Notifications only. */}
         </div>
       </div>
     </header>

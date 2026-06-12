@@ -45,7 +45,7 @@ import { showToast } from '../lib/dialogs';
 import { collection, addDoc, serverTimestamp, query, getDocs, where, getDoc, doc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { useAuth } from '../hooks/useAuth';
-import { Send, Image as ImageIcon, MapPin, X, Users, Globe, Shield, Target, Settings, HeartHandshake, Camera, Video, Trash2, Plus, Home, Navigation, Coffee, Calendar, Clock, Sparkles } from 'lucide-react';
+import { Send, Image as ImageIcon, MapPin, X, Users, Globe, Target, Settings, HeartHandshake, Camera, Video, Trash2, Plus, Home, Navigation, Coffee, Calendar, Clock, Sparkles } from 'lucide-react';
 import { Circle, KulaReachType, ItemType, SavedLocation, TrustPrivacyLevel, SharingMode } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { Joyride, Step, EventData, STATUS } from 'react-joyride';
@@ -106,6 +106,26 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
   const [visibilityReach, setVisibilityReach] = useState<TrustPrivacyLevel>('PUBLIC');
   const [sharingMode, setSharingMode] = useState<SharingMode | undefined>(undefined);
 
+  // ── UNIFIED AUDIENCE ──
+  // One "Who can see this?" choice replaces the old Post Scope modal +
+  // Trust Network Reach cards. Each option maps onto the existing data
+  // model (reachTypes / visibilityReach), so feed filtering, trust checks,
+  // and security rules are untouched.
+  type Audience = 'CIRCLES' | 'NEIGHBORHOOD' | 'FRIENDS' | 'EVERYONE';
+  const [audience, setAudience] = useState<Audience>(initialCircleId ? 'CIRCLES' : 'NEIGHBORHOOD');
+  const applyAudience = (a: Audience) => {
+    setAudience(a);
+    if (a === 'CIRCLES') { setReachTypes(['SPECIFIC_CIRCLES']); setVisibilityReach('PUBLIC'); }
+    if (a === 'NEIGHBORHOOD') { setReachTypes(['VICINITY']); setVisibilityReach('PUBLIC'); }
+    if (a === 'FRIENDS') { setReachTypes(['VICINITY']); setVisibilityReach('DEGREE_2'); }
+    if (a === 'EVERYONE') { setReachTypes(['VICINITY', 'ALL_CIRCLES']); setVisibilityReach('PUBLIC'); }
+  };
+
+  // Advanced disclosure: timing + location settings collapse behind one
+  // toggle (sensible defaults apply). Gatherings need venue/time, so JOIN
+  // auto-expands it.
+  const [showAdvanced, setShowAdvanced] = useState((initialType || 'SHARE') === 'JOIN');
+
   // ── Location Source Mode ──
   // Controls WHERE the post is pinned on the map:
   //   NEIGHBORHOOD = user's home coordinates (from profile)
@@ -126,6 +146,7 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
   useEffect(() => {
     if (type === 'JOIN') {
       setLocationMode('VENUE');
+      setShowAdvanced(true); // gatherings need venue + time up front
     } else if (savedLocations.length > 0) {
       setLocationMode('SAVED_LOCATION');
       // Auto-select the default or first saved location
@@ -301,7 +322,6 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
       setReachTypes(normalizedReach);
     }
   }, [profile?.defaultReach, initialCircleId]);
-  const [showReachOptions, setShowReachOptions] = useState(false);
   const [circles, setCircles] = useState<Circle[]>([]);
 
   useEffect(() => {
@@ -681,8 +701,113 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
             />
           </div>
 
-          {/* ── Availability Window — shown for ALL entry types EXCEPT FLOW ── */}
+
+          {/* ── JOIN-specific event time window ── */}
+          {type === 'JOIN' && (
+            <div className="space-y-4 bg-teal-50 p-4 rounded-3xl border border-teal-100">
+              <div className="flex items-center gap-2 px-1">
+                <Clock size={14} className="text-teal-500" />
+                <label className="text-[10px] font-black uppercase tracking-widest text-teal-600">Event Time (Optional)</label>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-bold uppercase tracking-widest text-teal-500 ml-1">Starts</label>
+                  <input
+                    type="datetime-local"
+                    value={eventTime}
+                    onChange={(e) => setEventTime(e.target.value)}
+                    className="w-full bg-white rounded-2xl px-3 py-3 text-sm text-stone-700 border border-teal-200 focus:ring-2 focus:ring-teal-400 outline-none transition-all"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-bold uppercase tracking-widest text-teal-500 ml-1">Ends</label>
+                  <input
+                    type="datetime-local"
+                    value={eventEndTime}
+                    onChange={(e) => setEventEndTime(e.target.value)}
+                    className="w-full bg-white rounded-2xl px-3 py-3 text-sm text-stone-700 border border-teal-200 focus:ring-2 focus:ring-teal-400 outline-none transition-all"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── WHO CAN SEE THIS? ──────────────────────────────────────
+              One audience control replaces the old "Post Scope" modal +
+              "Trust Network Reach" cards (two overlapping vocabularies for
+              the same question). Each choice maps onto the existing data
+              model (reachTypes / targetCircles / visibilityReach), so feed
+              filtering and rules are untouched. */}
+          <div className="space-y-3">
+            <label className="text-[10px] font-black uppercase tracking-widest text-stone-400 px-2">Who can see this?</label>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                { id: 'CIRCLES', icon: Target, title: 'My Circles', desc: 'Only circles you choose' },
+                { id: 'NEIGHBORHOOD', icon: Home, title: 'Neighborhood', desc: 'Neighbors near you' },
+                { id: 'FRIENDS', icon: Users, title: 'Friends of friends', desc: 'Up to 2 connections away' },
+                { id: 'EVERYONE', icon: Globe, title: 'Everyone', desc: 'All of KULA' },
+              ] as const).map(option => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => applyAudience(option.id)}
+                  className={`p-4 rounded-3xl border-2 flex flex-col gap-1.5 transition-all text-left ${
+                    audience === option.id
+                      ? 'border-stone-900 bg-stone-900 text-white shadow-md'
+                      : 'border-stone-100 bg-stone-50 text-stone-600 hover:border-stone-300'
+                  }`}
+                >
+                  <option.icon size={18} />
+                  <span className="text-[11px] font-black uppercase tracking-widest leading-none">{option.title}</span>
+                  <span className={`text-[9px] font-medium leading-tight ${audience === option.id ? 'text-stone-300' : 'text-stone-400'}`}>
+                    {option.desc}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {/* Inline circle picker — only when "My Circles" is chosen */}
+            {audience === 'CIRCLES' && (
+              <div className="flex flex-wrap gap-2 p-3 bg-stone-50 rounded-3xl border border-stone-100">
+                {circles.length === 0 && (
+                  <p className="text-[10px] text-stone-400 italic px-2 py-1">Join a circle first to share with it.</p>
+                )}
+                {circles.map(circle => (
+                  <button
+                    key={circle.id}
+                    type="button"
+                    onClick={() => setTargetCircles(prev =>
+                      prev.includes(circle.id) ? prev.filter(id => id !== circle.id) : [...prev, circle.id]
+                    )}
+                    className={`px-3 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border-2 transition-all ${
+                      targetCircles.includes(circle.id)
+                        ? 'bg-stone-900 text-white border-stone-900'
+                        : 'bg-white text-stone-500 border-stone-100 hover:border-stone-300'
+                    }`}
+                  >
+                    {circle.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── Advanced disclosure: availability + location settings.
+              Sensible defaults apply when collapsed (30-day expiry,
+              privacy-blurred neighborhood pin). ── */}
           {type !== 'FLOW' && (
+            <button
+              type="button"
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              className="w-full flex items-center justify-center gap-2 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-stone-400 hover:text-stone-600 transition-colors"
+            >
+              <Settings size={12} />
+              {showAdvanced ? 'Hide advanced options' : 'Advanced options · timing & location'}
+            </button>
+          )}
+
+          {/* ── Availability Window — behind the Advanced disclosure ── */}
+          {type !== 'FLOW' && showAdvanced && (
             <div className="space-y-3 bg-stone-50 p-4 rounded-3xl border border-stone-100">
               <div className="flex items-center gap-2 px-1">
                 <Calendar size={14} className="text-stone-400" />
@@ -725,238 +850,8 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
               )}
             </div>
           )}
-
-          {/* ── JOIN-specific event time window ── */}
-          {type === 'JOIN' && (
-            <div className="space-y-4 bg-teal-50 p-4 rounded-3xl border border-teal-100">
-              <div className="flex items-center gap-2 px-1">
-                <Clock size={14} className="text-teal-500" />
-                <label className="text-[10px] font-black uppercase tracking-widest text-teal-600">Event Time (Optional)</label>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label className="text-[9px] font-bold uppercase tracking-widest text-teal-500 ml-1">Starts</label>
-                  <input
-                    type="datetime-local"
-                    value={eventTime}
-                    onChange={(e) => setEventTime(e.target.value)}
-                    className="w-full bg-white rounded-2xl px-3 py-3 text-sm text-stone-700 border border-teal-200 focus:ring-2 focus:ring-teal-400 outline-none transition-all"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-[9px] font-bold uppercase tracking-widest text-teal-500 ml-1">Ends</label>
-                  <input
-                    type="datetime-local"
-                    value={eventEndTime}
-                    onChange={(e) => setEventEndTime(e.target.value)}
-                    className="w-full bg-white rounded-2xl px-3 py-3 text-sm text-stone-700 border border-teal-200 focus:ring-2 focus:ring-teal-400 outline-none transition-all"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div className="space-y-4">
-            <div className="flex items-center justify-between px-2">
-              <label className="text-[10px] font-black uppercase tracking-widest text-stone-400">Post Scope</label>
-            </div>
-            
-            <button
-              type="button"
-              onClick={() => setShowReachOptions(true)}
-              className="w-full p-4 bg-stone-50 border-2 border-stone-200 rounded-[2rem] flex items-center gap-4 transition-all hover:border-stone-900 group"
-            >
-              <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center text-stone-900 shadow-sm border border-stone-100 group-hover:bg-stone-900 group-hover:text-white transition-all">
-                {reachTypes.includes('VICINITY') && reachTypes.length === 1 && <Globe size={24} />}
-                {reachTypes.includes('ALL_CIRCLES') && reachTypes.length === 1 && <Shield size={24} />}
-                {reachTypes.includes('SPECIFIC_CIRCLES') && reachTypes.length === 1 && <Target size={24} />}
-                {reachTypes.length > 1 && <Users size={24} />}
-              </div>
-              <div className="flex-1 text-left">
-                <h4 className="text-sm font-bold text-stone-900 leading-tight">
-                  {reachTypes.includes('VICINITY') && reachTypes.includes('SPECIFIC_CIRCLES') ? 'Neighborhood & Circles' :
-                   reachTypes.includes('VICINITY') ? 'Your Neighborhood' :
-                   reachTypes.includes('SPECIFIC_CIRCLES') ? 'Your Circles' : 'Select Scope'}
-                </h4>
-                <p className="text-[10px] text-stone-400 font-medium">
-                  Visible to {Array.isArray(reachTypes) && reachTypes.includes('VICINITY') ? 'neighbors' : ''} 
-                  {Array.isArray(reachTypes) && reachTypes.includes('VICINITY') && reachTypes.some(t => t !== 'VICINITY') ? ' & ' : ''}
-                  {Array.isArray(reachTypes) && reachTypes.includes('SPECIFIC_CIRCLES') ? `${targetCircles.length} community circles` : ''}
-                </p>
-                {initialCircleId && reachTypes.length === 1 && reachTypes[0] === 'SPECIFIC_CIRCLES' && (
-                  <p className="text-[9px] text-stone-300 italic mt-1 group-hover:text-stone-500">Only visible within this circle. Tap to adjust scope.</p>
-                )}
-              </div>
-            </button>
-          </div>
-
-          <div className="space-y-4">
-            <div className="flex items-center justify-between px-2">
-              <label className="text-[10px] font-black uppercase tracking-widest text-stone-400">Trust Network Reach</label>
-            </div>
-            
-            <div className="w-full p-4 bg-stone-50 border border-stone-200/80 rounded-[2rem] flex flex-col gap-4">
-              <p className="text-[10px] text-stone-400 font-medium px-2 leading-tight">
-                Controls the maximum degree of connection distance users must have from you to see this post.
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {[
-                  { id: 'PRIVATE', title: 'Private', desc: 'Only visible to you' },
-                  { id: 'DEGREE_1', title: '1st Connection', desc: 'Only direct vouched friends & family' },
-                  { id: 'DEGREE_2', title: '2nd Connection', desc: 'Friends of friends' },
-                  { id: 'DEGREE_3', title: '3rd Connection', desc: 'Up to 3 separation steps' },
-                  { id: 'DEGREE_4', title: '4th Connection', desc: 'Max trust graph separation (4 steps)' },
-                  { id: 'PUBLIC', title: 'Public (Anyone)', desc: 'Visible to everyone' }
-                ].map(option => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => setVisibilityReach(option.id as TrustPrivacyLevel)}
-                    className={`p-3 rounded-2xl border-2 flex flex-col transition-all text-left ${
-                      visibilityReach === option.id
-                        ? 'border-stone-900 bg-stone-900 text-white shadow-md'
-                        : 'border-stone-100 bg-white text-stone-500 hover:border-stone-200'
-                    }`}
-                  >
-                    <span className="text-[10px] font-black uppercase tracking-widest leading-none mb-1">{option.title}</span>
-                    <span className={`text-[9px] font-medium leading-tight ${
-                      visibilityReach === option.id ? 'text-stone-300' : 'text-stone-400'
-                    }`}>
-                      {option.desc}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
         </div>
 
-        <AnimatePresence>
-          {showReachOptions && (
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-stone-950/40 backdrop-blur-sm"
-              onClick={() => setShowReachOptions(false)}
-            >
-              <motion.div 
-                initial={{ scale: 0.9, opacity: 0, y: 20 }}
-                animate={{ scale: 1, opacity: 1, y: 0 }}
-                exit={{ scale: 0.9, opacity: 0, y: 20 }}
-                className="w-full max-w-sm bg-white rounded-[3rem] p-8 shadow-2xl relative max-h-[85vh] overflow-y-auto no-scrollbar"
-                onClick={e => e.stopPropagation()}
-              >
-                <div className="text-center mb-8">
-                  <h3 className="serif text-2xl font-bold text-stone-900 mb-2">Scope of Resonance</h3>
-                  <p className="text-xs text-stone-400 font-medium">How far should your energy travel?</p>
-                </div>
-
-                <div className="space-y-3">
-                  {[
-                    { id: 'VICINITY', title: 'Your Neighborhood', icon: Globe, desc: 'Visible to neighbors' },
-                    { id: 'SPECIFIC_CIRCLES', title: 'Your Circles', icon: Target, desc: 'Targeted groups' }
-                  ].map(option => (
-                    <button
-                      key={option.id}
-                      type="button"
-                      onClick={() => {
-                        setReachTypes(prev => {
-                          const isAlreadySelected = prev.includes(option.id as KulaReachType);
-                          
-                          if (option.id === 'VICINITY') {
-                            if (isAlreadySelected) {
-                              // Only allow deselecting vicinity if at least one circle option is selected
-                              return prev.length > 1 ? prev.filter(t => t !== 'VICINITY') : prev;
-                            } else {
-                              return [...prev, 'VICINITY'];
-                            }
-                          } else {
-                            // Community options are mutually exclusive for now (either ALL or SPECIFIC)
-                            const base = prev.filter(t => t === 'VICINITY');
-                            if (isAlreadySelected) {
-                              // Deselecting community option
-                              return base.length > 0 ? base : ['VICINITY'];
-                            } else {
-                              return [...base, option.id as KulaReachType];
-                            }
-                          }
-                        });
-                      }}
-                      className={`w-full p-4 rounded-3xl border-2 flex items-center gap-4 transition-all ${
-                        reachTypes.includes(option.id as KulaReachType) 
-                          ? 'border-stone-900 bg-stone-900 text-white shadow-lg' 
-                          : 'border-stone-100 bg-stone-50 text-stone-600 hover:border-stone-300'
-                      }`}
-                    >
-                      <option.icon size={20} />
-                      <div className="text-left">
-                        <div className="text-sm font-bold">{option.title}</div>
-                        <div className={`text-[10px] ${reachTypes.includes(option.id as KulaReachType) ? 'text-stone-300' : 'text-stone-400'}`}>
-                          {option.desc}
-                        </div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-
-                {reachTypes.includes('SPECIFIC_CIRCLES') && (
-                  <div className="mt-6 space-y-2 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
-                    {circles.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (targetCircles.length === circles.length) {
-                            setTargetCircles([]);
-                          } else {
-                            setTargetCircles(circles.map(c => c.id));
-                          }
-                        }}
-                        className={`w-full p-4 rounded-2xl text-[11px] font-black uppercase tracking-[0.1em] border-2 transition-all flex items-center justify-between group/btn ${
-                          targetCircles.length === circles.length
-                            ? 'bg-stone-900 text-white border-stone-900 shadow-lg'
-                            : 'bg-white text-stone-500 border-stone-100 hover:border-stone-300'
-                        }`}
-                      >
-                        <span>Select All</span>
-                        {targetCircles.length === circles.length && <Plus size={14} className="rotate-45" />}
-                      </button>
-                    )}
-                    {circles.map(circle => (
-                      <button
-                        key={circle.id}
-                        type="button"
-                        onClick={() => {
-                          setTargetCircles(prev => 
-                            prev.includes(circle.id) 
-                              ? prev.filter(id => id !== circle.id) 
-                              : [...prev, circle.id]
-                          );
-                        }}
-                        className={`w-full p-4 rounded-2xl text-[11px] font-black uppercase tracking-[0.1em] border-2 transition-all flex items-center justify-between group/btn ${
-                          targetCircles.includes(circle.id)
-                            ? 'bg-stone-900 text-white border-stone-900 shadow-lg'
-                            : 'bg-white text-stone-500 border-stone-100 hover:border-stone-300'
-                        }`}
-                      >
-                        <span>{circle.name}</span>
-                        {targetCircles.includes(circle.id) && <Plus size={14} className="rotate-45" />}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                <button 
-                  type="button"
-                  onClick={() => setShowReachOptions(false)}
-                  className="w-full mt-8 py-4 bg-stone-100 rounded-[2rem] text-stone-900 font-bold text-xs uppercase tracking-widest hover:bg-stone-200 transition-all"
-                >
-                  Confirm Reach
-                </button>
-              </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>
 
         <div className="flex flex-col gap-4">
           <div className="flex gap-4">
@@ -995,8 +890,10 @@ export default function PostItem({ location, onSuccess, onCancel, initialCircleI
             </label>
           </div>
           
-          <div className="space-y-3">
-            {/* Location Source Selector */}
+          <div className="space-y-3" style={{ display: showAdvanced ? undefined : 'none' }}>
+            {/* Location Source Selector — behind the Advanced disclosure.
+                Hidden (not unmounted) so locationMode state and the GPS
+                status indicator keep working with the defaults. */}
             <div className="space-y-2">
               <label className="text-[10px] font-black uppercase tracking-widest text-stone-400 ml-2">Location Source</label>
               <div className="space-y-2">

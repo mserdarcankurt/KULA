@@ -12,7 +12,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import Feed from './Feed';
 import { useItems } from '../hooks/useItems';
 import { useAuth } from '../hooks/useAuth';
-import { ChevronDown, Sliders, MessageCircle, Heart, Camera, Image as ImageIcon, X } from 'lucide-react';
+import { ChevronDown, Sliders, MessageCircle, Heart, Camera, Image as ImageIcon, X, Map as MapIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ART_DIRECTION } from '../lib/artDirection';
 import { db, storage } from '../lib/firebase';
@@ -383,16 +383,18 @@ function BuzzCommentCard({ comment, onViewItem, onViewProfile }: BuzzCommentCard
 }
 
 /* ── Main Explore Screen Component ── */
-export default function Explore({ 
-  location, 
+export default function Explore({
+  location,
   onNavigateToChat,
   onNavigateToCircle,
-  onNavigateToTab
-}: { 
+  onNavigateToTab,
+  onOpenCommunity
+}: {
   location: { lat: number; lng: number } | null;
   onNavigateToChat?: (chatId: string) => void;
   onNavigateToCircle?: (circleId: string) => void;
   onNavigateToTab?: (tab: string) => void;
+  onOpenCommunity?: () => void;
 }) {
   const { user, profile } = useAuth();
   const [feedMode, setFeedMode] = useState<'BOARD' | 'FLOW'>('BOARD');
@@ -741,7 +743,7 @@ export default function Explore({
           <div id="tour-explore-views" className="grid grid-cols-2 flex-1 sm:flex sm:w-auto bg-[#F3F1EB] p-1 rounded-2xl border border-stone-350 shadow-[inset_0_1.5px_3px_rgba(0,0,0,0.06)]">
             {[
               { id: 'BOARD', label: 'Board' },
-              { id: 'FLOW', label: 'Hopescrolling' }
+              { id: 'FLOW', label: 'Flow' }
             ].map(({ id, label }) => {
               const isActive = feedMode === id;
               return (
@@ -759,6 +761,18 @@ export default function Explore({
               );
             })}
           </div>
+
+          {/* Community map — the drawer moved out of the bottom nav and
+              lives here now: the map is a way of looking at Home. */}
+          {onOpenCommunity && (
+            <button
+              onClick={onOpenCommunity}
+              className="p-2 rounded-2xl transition-all border shadow-sm bg-[#F6F4EE] text-stone-700 border-stone-350 hover:bg-[#EADFC9] flex items-center justify-center"
+              title="Community map"
+            >
+              <MapIcon size={16} className="text-stone-500" />
+            </button>
+          )}
 
           {/* Minimal Filters Button */}
           <div className="relative">
