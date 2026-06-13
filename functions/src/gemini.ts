@@ -14,8 +14,15 @@
  *    (rate_limits/{uid}, Admin-SDK-only — clients are denied by rules).
  */
 import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { defineSecret } from "firebase-functions/params";
 import { Timestamp } from "firebase-admin/firestore";
 import { getDb } from "./utils";
+
+// GEMINI_API_KEY lives in Google Secret Manager (set via
+// `firebase functions:secrets:set GEMINI_API_KEY`). Declaring it here binds
+// it to the functions below so it's injected as process.env.GEMINI_API_KEY
+// at runtime — never committed to the repo or the bundle.
+const geminiApiKey = defineSecret("GEMINI_API_KEY");
 
 const GEMINI_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
@@ -97,7 +104,7 @@ async function callGemini(
   return result?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 }
 
-export const translateText = onCall({ maxInstances: 10 }, async (request) => {
+export const translateText = onCall({ maxInstances: 10, secrets: [geminiApiKey] }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "User must be authenticated.");
   }
@@ -129,7 +136,7 @@ export const translateText = onCall({ maxInstances: 10 }, async (request) => {
   }
 });
 
-export const detectAndTranslateText = onCall({ maxInstances: 10 }, async (request) => {
+export const detectAndTranslateText = onCall({ maxInstances: 10, secrets: [geminiApiKey] }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "User must be authenticated.");
   }
